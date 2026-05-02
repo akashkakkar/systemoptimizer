@@ -1,9 +1,5 @@
-//! LSO DB — SQLCipher storage layer for persistent data.
+//! LSO DB — storage layer for probe results and system state.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_compiles() {
-        assert!(true);
-    }
-}
+mod store;
+
+pub use store::{ProbeStore, StorageBackend};

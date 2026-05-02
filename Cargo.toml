@@ -25,3 +25,5 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+nix = { version = "0.29", features = ["fs"] }
+libc = "0.2"

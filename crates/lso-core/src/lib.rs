@@ -1,9 +1,9 @@
 //! LSO Core — shared types, traits, and error definitions.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_compiles() {
-        assert!(true);
-    }
-}
+mod error;
+mod platform;
+mod probe;
+
+pub use error::SensorError;
+pub use platform::Platform;
+pub use probe::{MetricValue, PrivilegeLevel, ProbeResult, SystemProbe};

@@ -9,3 +9,14 @@ thiserror.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+chrono.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+nix.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_json.workspace = true
+lso-db = { path = "../lso-db" }
+tempfile = "3"
