@@ -242,6 +242,17 @@ pub struct AuditEntry {
     pub rollback_available: bool,
 }
 
+/// IPC wire type — disk usage for a single mount point.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskUsageReport {
+    pub mount_point: String,
+    pub fs_type: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub available_bytes: u64,
+    pub usage_percent: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

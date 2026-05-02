@@ -224,7 +224,7 @@ mod tests {
             collected_at: Utc::now(),
             platform: "macos".into(),
         };
-        db.store_metrics(&[metric.clone()]).unwrap();
+        db.store_metrics(std::slice::from_ref(&metric)).unwrap();
 
         let fetched = db.get_recent_metrics("disk.usage", 10).unwrap();
         assert_eq!(fetched.len(), 1);

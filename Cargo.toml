@@ -7,6 +7,7 @@ members = [
   "crates/lso-actuator",
   "crates/lso-ai",
   "crates/lso-db",
+  "src-tauri",
 ]
 
 [workspace.package]
