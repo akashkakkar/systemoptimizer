@@ -1865,10 +1865,14 @@ dependencies = [
 name = "lso-engine"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "lso-core",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
+ "toml 0.8.2",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

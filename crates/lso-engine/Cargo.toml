@@ -5,6 +5,12 @@ edition.workspace = true
 
 [dependencies]
 lso-core = { path = "../lso-core" }
-thiserror.workspace = true
+chrono.workspace = true
 serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
 tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
