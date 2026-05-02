@@ -1,0 +1,11 @@
+[package]
+name = "lso-sensor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lso-core = { path = "../lso-core" }
+thiserror.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true

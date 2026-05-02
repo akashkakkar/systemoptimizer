@@ -1,0 +1,10 @@
+[package]
+name = "lso-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lso-core = { path = "../lso-core" }
+thiserror.workspace = true
+serde.workspace = true
+tracing.workspace = true

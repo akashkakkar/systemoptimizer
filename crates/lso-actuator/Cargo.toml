@@ -1,0 +1,12 @@
+[package]
+name = "lso-actuator"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lso-core = { path = "../lso-core" }
+lso-db = { path = "../lso-db" }
+thiserror.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
