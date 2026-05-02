@@ -1,0 +1,78 @@
+# Built-in disk rules for LSO.
+# Rules are evaluated in priority order (highest first).
+#
+# Metric names match the suffix after "::" in SystemMetric.name.
+# The sensor produces metrics like "/::usage_percent", "/home::total_bytes".
+# Setting metric = "usage_percent" matches all mount points.
+
+[[rules]]
+id = "disk.usage_critical"
+name = "Critical disk usage"
+description = "A volume is using more than {threshold}% of capacity"
+category = "disk"
+enabled = true
+
+[rules.condition]
+probe = "disk.usage"
+metric = "usage_percent"
+operator = "greater_than"
+threshold = 95.0
+
+[rules.recommendation]
+title = "Critically low disk space on {target}"
+description = "Volume {target} is {value}% full. Immediate action required — system stability may be affected. Free up space by removing large unused files, emptying trash, or moving data to external storage."
+risk_level = "critical"
+category = "cleanup"
+
+[rules.metadata]
+platforms = ["macos", "linux", "windows"]
+tags = ["disk", "storage", "cleanup", "urgent"]
+priority = 100
+
+[[rules]]
+id = "disk.usage_high"
+name = "High disk usage detected"
+description = "A volume is using more than {threshold}% of capacity"
+category = "disk"
+enabled = true
+
+[rules.condition]
+probe = "disk.usage"
+metric = "usage_percent"
+operator = "greater_than"
+threshold = 85.0
+
+[rules.recommendation]
+title = "Free up disk space on {target}"
+description = "Volume {target} is {value}% full. Consider removing unused files, emptying trash, or moving data to external storage."
+risk_level = "low"
+category = "cleanup"
+
+[rules.metadata]
+platforms = ["macos", "linux", "windows"]
+tags = ["disk", "storage", "cleanup"]
+priority = 50
+
+[[rules]]
+id = "disk.tmp_large"
+name = "Large temporary directory"
+description = "Temporary directory exceeds {threshold} GB"
+category = "disk"
+enabled = true
+
+[rules.condition]
+probe = "disk.usage"
+metric = "tmp_size_gb"
+operator = "greater_than"
+threshold = 1.0
+
+[rules.recommendation]
+title = "Clean up temporary files on {target}"
+description = "Temporary directory on {target} is {value} GB. Stale temp files can be safely removed to reclaim disk space."
+risk_level = "low"
+category = "cleanup"
+
+[rules.metadata]
+platforms = ["macos", "linux", "windows"]
+tags = ["disk", "temp", "cleanup"]
+priority = 30
