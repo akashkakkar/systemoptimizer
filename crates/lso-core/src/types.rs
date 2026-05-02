@@ -12,6 +12,17 @@ pub enum RiskLevel {
     Critical,
 }
 
+impl RiskLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
 impl std::fmt::Display for RiskLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -19,6 +30,20 @@ impl std::fmt::Display for RiskLevel {
             Self::Medium => f.write_str("Medium"),
             Self::High => f.write_str("High"),
             Self::Critical => f.write_str("Critical"),
+        }
+    }
+}
+
+impl std::str::FromStr for RiskLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "critical" => Ok(Self::Critical),
+            other => Err(format!("unknown risk level: {other}")),
         }
     }
 }
@@ -92,6 +117,85 @@ impl std::fmt::Display for ApprovalStatus {
     }
 }
 
+/// Lifecycle status of a recommendation, tracked by the DB layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecommendationStatus {
+    Pending,
+    Accepted,
+    Dismissed,
+    Applied,
+}
+
+impl RecommendationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::Dismissed => "dismissed",
+            Self::Applied => "applied",
+        }
+    }
+}
+
+impl std::fmt::Display for RecommendationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for RecommendationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "accepted" => Ok(Self::Accepted),
+            "dismissed" => Ok(Self::Dismissed),
+            "applied" => Ok(Self::Applied),
+            other => Err(format!("unknown recommendation status: {other}")),
+        }
+    }
+}
+
+/// Result of an executed actuator action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionResult {
+    Success,
+    Failed,
+    RolledBack,
+}
+
+impl ActionResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::RolledBack => "rolled_back",
+        }
+    }
+}
+
+impl std::fmt::Display for ActionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ActionResult {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "success" => Ok(Self::Success),
+            "failed" => Ok(Self::Failed),
+            "rolled_back" => Ok(Self::RolledBack),
+            other => Err(format!("unknown action result: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recommendation {
     pub id: Uuid,
@@ -101,15 +205,20 @@ pub struct Recommendation {
     pub category: String,
     pub target: String,
     pub rollback_plan: Option<String>,
+    pub status: RecommendationStatus,
+    pub created_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemMetric {
+    pub id: Uuid,
+    pub probe_id: String,
     pub name: String,
     pub value: f64,
-    pub unit: String,
-    pub timestamp: DateTime<Utc>,
-    pub source_probe: String,
+    pub unit: Option<String>,
+    pub collected_at: DateTime<Utc>,
+    pub platform: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,13 +231,15 @@ pub struct ProbeResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
+    pub id: Uuid,
     pub timestamp: DateTime<Utc>,
     pub action: String,
     pub target: String,
     pub risk_level: RiskLevel,
     pub user_approved: bool,
-    pub snapshot_id: Option<Uuid>,
-    pub result: String,
+    pub snapshot_id: Option<String>,
+    pub result: ActionResult,
+    pub rollback_available: bool,
 }
 
 #[cfg(test)]
@@ -137,7 +248,7 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn roundtrip<T: Serialize + for<'de> Deserialize<'de>>(value: &T) -> T {
+    fn roundtrip<T: serde::Serialize + for<'de> serde::Deserialize<'de>>(value: &T) -> T {
         let json = serde_json::to_string(value).expect("serialize");
         serde_json::from_str(&json).expect("deserialize")
     }
@@ -154,6 +265,14 @@ mod tests {
     fn risk_level_serializes_lowercase() {
         let json = serde_json::to_string(&RiskLevel::Critical).expect("serialize");
         assert_eq!(json, "\"critical\"");
+    }
+
+    #[test]
+    fn risk_level_fromstr_roundtrip() {
+        for s in ["low", "medium", "high", "critical"] {
+            let level: RiskLevel = s.parse().unwrap();
+            assert_eq!(level.as_str(), s);
+        }
     }
 
     #[test]
@@ -198,6 +317,22 @@ mod tests {
     }
 
     #[test]
+    fn recommendation_status_roundtrip() {
+        for s in ["pending", "accepted", "dismissed", "applied"] {
+            let status: RecommendationStatus = s.parse().unwrap();
+            assert_eq!(status.as_str(), s);
+        }
+    }
+
+    #[test]
+    fn action_result_roundtrip() {
+        for s in ["success", "failed", "rolled_back"] {
+            let result: ActionResult = s.parse().unwrap();
+            assert_eq!(result.as_str(), s);
+        }
+    }
+
+    #[test]
     fn recommendation_serde_roundtrip() {
         let rec = Recommendation {
             id: Uuid::new_v4(),
@@ -207,23 +342,30 @@ mod tests {
             category: "cleanup".into(),
             target: "/tmp/build-cache".into(),
             rollback_plan: Some("Restore from snapshot".into()),
+            status: RecommendationStatus::Pending,
+            created_at: Utc::now(),
+            resolved_at: None,
         };
         let rt = roundtrip(&rec);
         assert_eq!(rec.id, rt.id);
         assert_eq!(rec.title, rt.title);
         assert_eq!(rec.risk_level, rt.risk_level);
+        assert_eq!(rec.status, rt.status);
     }
 
     #[test]
     fn system_metric_serde_roundtrip() {
         let metric = SystemMetric {
+            id: Uuid::new_v4(),
+            probe_id: "disk_usage".into(),
             name: "disk_free".into(),
             value: 42.5,
-            unit: "GB".into(),
-            timestamp: Utc::now(),
-            source_probe: "disk_usage".into(),
+            unit: Some("GB".into()),
+            collected_at: Utc::now(),
+            platform: "macos".into(),
         };
         let rt = roundtrip(&metric);
+        assert_eq!(metric.id, rt.id);
         assert_eq!(metric.name, rt.name);
         assert!((metric.value - rt.value).abs() < f64::EPSILON);
     }
@@ -233,11 +375,13 @@ mod tests {
         let result = ProbeResult {
             probe_id: "disk_usage".into(),
             metrics: vec![SystemMetric {
+                id: Uuid::new_v4(),
+                probe_id: "disk_usage".into(),
                 name: "disk_free".into(),
                 value: 100.0,
-                unit: "GB".into(),
-                timestamp: Utc::now(),
-                source_probe: "disk_usage".into(),
+                unit: Some("GB".into()),
+                collected_at: Utc::now(),
+                platform: "macos".into(),
             }],
             collected_at: Utc::now(),
             platform: Platform::MacOS,
@@ -251,19 +395,22 @@ mod tests {
     #[test]
     fn audit_entry_serde_roundtrip() {
         let entry = AuditEntry {
+            id: Uuid::new_v4(),
             timestamp: Utc::now(),
             action: "delete_cache".into(),
             target: "/tmp/cache".into(),
             risk_level: RiskLevel::Medium,
             user_approved: true,
-            snapshot_id: Some(Uuid::new_v4()),
-            result: "success".into(),
+            snapshot_id: Some("snap-001".into()),
+            result: ActionResult::Success,
+            rollback_available: true,
         };
         let rt = roundtrip(&entry);
         assert_eq!(entry.action, rt.action);
         assert_eq!(entry.risk_level, rt.risk_level);
         assert_eq!(entry.user_approved, rt.user_approved);
         assert_eq!(entry.snapshot_id, rt.snapshot_id);
+        assert_eq!(entry.result, rt.result);
     }
 
     #[test]

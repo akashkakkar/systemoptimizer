@@ -27,3 +27,5 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 async-trait = "0.1"
 dirs = "6"
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
+tempfile = "3"

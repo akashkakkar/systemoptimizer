@@ -41,8 +41,6 @@ mod tests {
 
     #[test]
     fn tracing_subscriber_initializes() {
-        // tracing_subscriber::fmt().init() panics if called twice in the same
-        // process, so we use try_init here to verify it doesn't error.
         use tracing_subscriber::EnvFilter;
 
         let result = tracing_subscriber::fmt()
@@ -63,7 +61,6 @@ mod tests {
 
     #[tokio::test]
     async fn system_probe_trait_is_object_safe() {
-        // Verify the trait can be used as a trait object.
         fn _accepts_probe(_probe: &dyn SystemProbe) {}
     }
 }
