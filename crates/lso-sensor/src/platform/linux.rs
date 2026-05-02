@@ -33,10 +33,12 @@ pub fn collect() -> Result<Vec<MountStats>, SensorError> {
 
         match statvfs(mount_point) {
             Ok(stat) => {
-                let block_size = stat.block_size() as u64;
-                let total_bytes = stat.blocks() * block_size;
-                let available_bytes = stat.blocks_available() * block_size;
-                let free_bytes = stat.blocks_free() * block_size;
+                // POSIX: total bytes = f_frsize * f_blocks. f_bsize is the preferred
+                // I/O block size and may differ — using it would overstate capacity.
+                let frag_size = stat.fragment_size() as u64;
+                let total_bytes = stat.blocks() * frag_size;
+                let available_bytes = stat.blocks_available() * frag_size;
+                let free_bytes = stat.blocks_free() * frag_size;
                 let used_bytes = total_bytes.saturating_sub(free_bytes);
 
                 let usage_percent = if total_bytes == 0 {

@@ -132,4 +132,23 @@ mod tests {
             assert!(r.usage_percent >= 0.0 && r.usage_percent <= 100.0);
         }
     }
+
+    /// Regression: previously used `f_bsize` instead of `f_frsize`, which on APFS
+    /// inflated reported sizes ~256×. Cap each mount at 100 TiB — anything larger
+    /// almost certainly indicates the bug returned.
+    #[test]
+    fn reported_sizes_are_within_plausible_bounds() {
+        const ONE_HUNDRED_TIB: u64 = 100 * 1024 * 1024 * 1024 * 1024;
+        let reports = get_disk_reports().expect("collect reports");
+        for r in &reports {
+            assert!(
+                r.total_bytes < ONE_HUNDRED_TIB,
+                "mount {} reports {} bytes — likely f_bsize/f_frsize mix-up",
+                r.mount_point,
+                r.total_bytes
+            );
+            assert!(r.available_bytes <= r.total_bytes);
+            assert!(r.used_bytes <= r.total_bytes);
+        }
+    }
 }

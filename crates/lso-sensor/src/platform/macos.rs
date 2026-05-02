@@ -20,10 +20,13 @@ pub fn collect() -> Result<Vec<MountStats>, SensorError> {
 
         match statvfs(mount_point.as_str()) {
             Ok(stat) => {
-                let block_size = stat.block_size();
-                let total_bytes = u64::from(stat.blocks()) * block_size;
-                let available_bytes = u64::from(stat.blocks_available()) * block_size;
-                let free_bytes = u64::from(stat.blocks_free()) * block_size;
+                // POSIX: total bytes = f_frsize * f_blocks. f_bsize is the I/O hint
+                // and on APFS is ~256× larger than f_frsize, which would massively
+                // overstate capacity.
+                let frag_size = stat.fragment_size();
+                let total_bytes = u64::from(stat.blocks()) * frag_size;
+                let available_bytes = u64::from(stat.blocks_available()) * frag_size;
+                let free_bytes = u64::from(stat.blocks_free()) * frag_size;
                 let used_bytes = total_bytes.saturating_sub(free_bytes);
 
                 let usage_percent = if total_bytes == 0 {
