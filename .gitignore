@@ -6,3 +6,6 @@
 .env
 .DS_Store
 Thumbs.db
+tsconfig.node.tsbuildinfo
+.claude/launch.json
+src-tauri/gen/
