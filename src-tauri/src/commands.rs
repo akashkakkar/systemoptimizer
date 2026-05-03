@@ -1,8 +1,17 @@
 //! Tauri IPC command handlers.
 
-use lso_core::{ApprovalResponse, DiskUsageReport, Recommendation, RecommendationStatus};
+use std::path::PathBuf;
+
+use chrono::Utc;
+use lso_actuator::{SnapshotManager, TempCleanupExecutor};
+use lso_core::{
+    ActionExecutor, ActionResult, ApprovalResponse, AuditEntry, AuditFilter, AuditPage,
+    CleanupTarget, DiskUsageReport, ExportFormat, PreflightReport, Recommendation,
+    RecommendationStatus, RiskLevel,
+};
 use lso_sensor::{CpuInfo, MemoryInfo, ProcessInfo};
 use tauri::State;
+use uuid::Uuid;
 
 use crate::state::AppState;
 
@@ -177,6 +186,149 @@ pub async fn get_process_list() -> Result<Vec<ProcessInfo>, String> {
     }
 
     let mut list: Vec<ProcessInfo> = processes.into_values().collect();
-    list.sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap_or(std::cmp::Ordering::Equal));
+    list.sort_by(|a, b| {
+        b.cpu_percent
+            .partial_cmp(&a.cpu_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(list)
+}
+
+/// Run preflight analysis for temp file cleanup (dry-run).
+#[tauri::command]
+pub async fn preflight_cleanup(
+    _state: State<'_, AppState>,
+    target: CleanupTarget,
+) -> Result<PreflightReport, String> {
+    let snap_mgr = SnapshotManager::new(snapshot_dir()).map_err(|e| e.to_string())?;
+    let executor = TempCleanupExecutor::new(target, snap_mgr).map_err(|e| e.to_string())?;
+    executor.preflight().await.map_err(|e| e.to_string())
+}
+
+/// Execute temp file cleanup with snapshot-before-delete safety.
+#[tauri::command]
+pub async fn execute_cleanup(
+    state: State<'_, AppState>,
+    target: CleanupTarget,
+) -> Result<lso_core::CleanupResult, String> {
+    let snap_mgr =
+        SnapshotManager::new(snapshot_dir()).map_err(|e| e.to_string())?;
+    let executor = TempCleanupExecutor::new(target, snap_mgr).map_err(|e| e.to_string())?;
+
+    let result = executor
+        .execute(Box::new(|_progress| {}))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let details = format!(
+        "Deleted {} files, {} bytes reclaimed in {}ms",
+        result.files_deleted, result.bytes_reclaimed, result.duration_ms
+    );
+    let entry = AuditEntry {
+        id: Uuid::new_v4(),
+        timestamp: Utc::now(),
+        action: "cleanup.temp_files".into(),
+        target: format!("{target:?}"),
+        category: "cleanup".into(),
+        risk_level: RiskLevel::Low,
+        user_approved: true,
+        snapshot_id: Some(result.snapshot_id.clone()),
+        result: if result.errors.is_empty() {
+            ActionResult::Success
+        } else {
+            ActionResult::Failed
+        },
+        details: Some(details),
+        rollback_available: true,
+    };
+    state
+        .db
+        .store_audit_entry(&entry)
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
+/// Get paginated, filtered audit log.
+#[tauri::command]
+pub async fn get_audit_log(
+    state: State<'_, AppState>,
+    filter: AuditFilter,
+) -> Result<AuditPage, String> {
+    state
+        .db
+        .get_audit_log(&filter)
+        .map_err(|e| e.to_string())
+}
+
+/// Export audit log to a file in JSON or CSV format.
+#[tauri::command]
+pub async fn export_audit_log(
+    state: State<'_, AppState>,
+    format: ExportFormat,
+    path: String,
+    filter: AuditFilter,
+) -> Result<(), String> {
+    state
+        .db
+        .export_audit_log(format, &filter, &PathBuf::from(path))
+        .map_err(|e| e.to_string())
+}
+
+/// Rollback a previously executed action using its snapshot.
+#[tauri::command]
+pub async fn rollback_action(
+    state: State<'_, AppState>,
+    audit_id: String,
+) -> Result<(), String> {
+    let entry = state
+        .db
+        .get_audit_entry(&audit_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("audit entry not found: {audit_id}"))?;
+
+    if !entry.rollback_available {
+        return Err("rollback not available for this entry".into());
+    }
+
+    let snapshot_id = entry
+        .snapshot_id
+        .clone()
+        .ok_or("no snapshot associated with this entry")?;
+
+    let snap_mgr =
+        SnapshotManager::new(snapshot_dir()).map_err(|e| e.to_string())?;
+    let restored = snap_mgr.restore(&snapshot_id).map_err(|e| e.to_string())?;
+
+    state
+        .db
+        .mark_rolled_back(&audit_id)
+        .map_err(|e| e.to_string())?;
+
+    let rollback_entry = AuditEntry {
+        id: Uuid::new_v4(),
+        timestamp: Utc::now(),
+        action: "rollback".into(),
+        target: entry.target,
+        category: entry.category,
+        risk_level: entry.risk_level,
+        user_approved: true,
+        snapshot_id: Some(snapshot_id.clone()),
+        result: ActionResult::RolledBack,
+        details: Some(format!("Restored {restored} files from {snapshot_id}")),
+        rollback_available: false,
+    };
+    state
+        .db
+        .store_audit_entry(&rollback_entry)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn snapshot_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("lso")
+        .join("snapshots")
 }

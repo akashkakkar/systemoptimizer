@@ -10,7 +10,8 @@ use std::sync::Mutex;
 
 use chrono::Utc;
 use lso_core::{
-    AuditEntry, Recommendation, RecommendationStatus, RiskLevel, SystemMetric,
+    ActionResult, AuditEntry, AuditFilter, AuditPage, ExportFormat, Recommendation,
+    RecommendationStatus, RiskLevel, SystemMetric,
 };
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -104,17 +105,19 @@ impl Database {
     pub fn store_audit_entry(&self, entry: &AuditEntry) -> DbResult<()> {
         let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
         conn.execute(
-            "INSERT INTO audit_log (id, timestamp, action, target, risk_level, user_approved, snapshot_id, result, rollback_available)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO audit_log (id, timestamp, action, target, category, risk_level, user_approved, snapshot_id, result, details, rollback_available)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![
                 entry.id.to_string(),
                 entry.timestamp.to_rfc3339(),
                 entry.action,
                 entry.target,
+                entry.category,
                 entry.risk_level.as_str(),
                 entry.user_approved as i32,
                 entry.snapshot_id,
                 entry.result.as_str(),
+                entry.details,
                 entry.rollback_available as i32,
             ],
         )?;
@@ -212,6 +215,199 @@ impl Database {
             Some(Err(e)) => Err(DbError::from(e)),
             None => Ok(None),
         }
+    }
+
+    /// Query audit log with filters and pagination.
+    pub fn get_audit_log(&self, filter: &AuditFilter) -> DbResult<AuditPage> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+
+        let mut where_clauses = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(ref status) = filter.status {
+            where_clauses.push(format!("result = ?{idx}"));
+            params.push(Box::new(status.as_str().to_string()));
+            idx += 1;
+        }
+        if let Some(ref risk) = filter.risk_level {
+            where_clauses.push(format!("risk_level = ?{idx}"));
+            params.push(Box::new(risk.as_str().to_string()));
+            idx += 1;
+        }
+        if let Some(ref cat) = filter.category {
+            where_clauses.push(format!("category = ?{idx}"));
+            params.push(Box::new(cat.clone()));
+            idx += 1;
+        }
+        if let Some(ref from) = filter.date_from {
+            where_clauses.push(format!("timestamp >= ?{idx}"));
+            params.push(Box::new(from.to_rfc3339()));
+            idx += 1;
+        }
+        if let Some(ref to) = filter.date_to {
+            where_clauses.push(format!("timestamp <= ?{idx}"));
+            params.push(Box::new(to.to_rfc3339()));
+            idx += 1;
+        }
+        if let Some(ref search) = filter.search {
+            where_clauses.push(format!("(target LIKE ?{idx} OR action LIKE ?{idx})"));
+            params.push(Box::new(format!("%{search}%")));
+            idx += 1;
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) FROM audit_log {where_sql}");
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let total_count: u64 = conn
+            .query_row(&count_sql, param_refs.as_slice(), |row| row.get(0))
+            .map_err(DbError::from)?;
+
+        let per_page = filter.per_page.unwrap_or(50);
+        let page = filter.page.unwrap_or(1).max(1);
+        let total_pages = if total_count == 0 {
+            1
+        } else {
+            ((total_count as f64) / (per_page as f64)).ceil() as u32
+        };
+        let offset = (page - 1) * per_page;
+
+        let query_sql = format!(
+            "SELECT id, timestamp, action, target, category, risk_level, user_approved, snapshot_id, result, details, rollback_available
+             FROM audit_log {where_sql}
+             ORDER BY timestamp DESC
+             LIMIT ?{idx} OFFSET ?{}",
+            idx + 1
+        );
+        params.push(Box::new(per_page));
+        params.push(Box::new(offset));
+
+        let param_refs2: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&query_sql)?;
+        let rows = stmt.query_map(param_refs2.as_slice(), Self::row_to_audit_entry)?;
+        let entries: Vec<AuditEntry> =
+            rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)?;
+
+        Ok(AuditPage {
+            entries,
+            total_count,
+            page,
+            per_page,
+            total_pages,
+        })
+    }
+
+    /// Get a single audit entry by ID.
+    pub fn get_audit_entry(&self, id: &str) -> DbResult<Option<AuditEntry>> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, action, target, category, risk_level, user_approved, snapshot_id, result, details, rollback_available
+             FROM audit_log WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], Self::row_to_audit_entry)?;
+        match rows.next() {
+            Some(Ok(entry)) => Ok(Some(entry)),
+            Some(Err(e)) => Err(DbError::from(e)),
+            None => Ok(None),
+        }
+    }
+
+    /// Mark an audit entry as no longer rollback-eligible.
+    pub fn mark_rolled_back(&self, id: &str) -> DbResult<()> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        conn.execute(
+            "UPDATE audit_log SET rollback_available = 0 WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Export audit entries matching a date range to JSON or CSV.
+    pub fn export_audit_log(
+        &self,
+        format: ExportFormat,
+        filter: &AuditFilter,
+        dest: &Path,
+    ) -> DbResult<()> {
+        let full_filter = AuditFilter {
+            per_page: Some(u32::MAX),
+            page: Some(1),
+            ..filter.clone()
+        };
+        let page = self.get_audit_log(&full_filter)?;
+
+        match format {
+            ExportFormat::Json => {
+                let json = serde_json::to_string_pretty(&page.entries)
+                    .map_err(|e| DbError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
+                std::fs::write(dest, json)?;
+            }
+            ExportFormat::Csv => {
+                let file = std::fs::File::create(dest)?;
+                let mut wtr = csv::Writer::from_writer(file);
+                wtr.write_record([
+                    "id", "timestamp", "action", "target", "category", "risk_level",
+                    "user_approved", "snapshot_id", "result", "details", "rollback_available",
+                ]).map_err(|e| DbError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
+                for entry in &page.entries {
+                    wtr.write_record([
+                        &entry.id.to_string(),
+                        &entry.timestamp.to_rfc3339(),
+                        &entry.action,
+                        &entry.target,
+                        &entry.category,
+                        entry.risk_level.as_str(),
+                        &entry.user_approved.to_string(),
+                        entry.snapshot_id.as_deref().unwrap_or(""),
+                        entry.result.as_str(),
+                        entry.details.as_deref().unwrap_or(""),
+                        &entry.rollback_available.to_string(),
+                    ]).map_err(|e| DbError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
+                }
+                wtr.flush().map_err(|e| DbError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn row_to_audit_entry(row: &rusqlite::Row<'_>) -> Result<AuditEntry, rusqlite::Error> {
+        Ok(AuditEntry {
+            id: row
+                .get::<_, String>(0)?
+                .parse::<Uuid>()
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+            timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?
+                .with_timezone(&Utc),
+            action: row.get(2)?,
+            target: row.get(3)?,
+            category: row.get(4)?,
+            risk_level: parse_enum::<RiskLevel>(&row.get::<_, String>(5)?, 5)?,
+            user_approved: row.get::<_, i32>(6)? != 0,
+            snapshot_id: row.get(7)?,
+            result: parse_enum::<ActionResult>(&row.get::<_, String>(8)?, 8)?,
+            details: row.get(9)?,
+            rollback_available: row.get::<_, i32>(10)? != 0,
+        })
     }
 
     fn row_to_recommendation(row: &rusqlite::Row<'_>) -> Result<Recommendation, rusqlite::Error> {
@@ -320,23 +516,135 @@ mod tests {
         assert_eq!(pending[0].target, "/tmp");
     }
 
+    fn make_entry(action: &str, result: ActionResult, category: &str) -> AuditEntry {
+        AuditEntry {
+            id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            action: action.into(),
+            target: "/tmp/stale".into(),
+            category: category.into(),
+            risk_level: RiskLevel::Medium,
+            user_approved: true,
+            snapshot_id: Some("snap-001".into()),
+            result,
+            details: Some("test details".into()),
+            rollback_available: result == ActionResult::Success,
+        }
+    }
+
     #[test]
-    fn audit_entry_insert() {
+    fn audit_entry_insert_and_query() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
         db.migrate().unwrap();
 
-        let entry = AuditEntry {
-            id: Uuid::new_v4(),
-            timestamp: Utc::now(),
-            action: "delete_temp_files".into(),
-            target: "/tmp/stale".into(),
-            risk_level: RiskLevel::Medium,
-            user_approved: true,
-            snapshot_id: Some("snap-001".into()),
-            result: ActionResult::Success,
-            rollback_available: true,
-        };
+        let entry = make_entry("delete_temp_files", ActionResult::Success, "cleanup");
         db.store_audit_entry(&entry).unwrap();
+
+        let page = db.get_audit_log(&AuditFilter::default()).unwrap();
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.entries[0].action, "delete_temp_files");
+        assert_eq!(page.entries[0].category, "cleanup");
+        assert_eq!(page.entries[0].details.as_deref(), Some("test details"));
+    }
+
+    #[test]
+    fn audit_log_filter_by_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
+        db.migrate().unwrap();
+
+        db.store_audit_entry(&make_entry("a", ActionResult::Success, "cleanup")).unwrap();
+        db.store_audit_entry(&make_entry("b", ActionResult::Failed, "cleanup")).unwrap();
+
+        let filter = AuditFilter {
+            status: Some(ActionResult::Success),
+            ..Default::default()
+        };
+        let page = db.get_audit_log(&filter).unwrap();
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.entries[0].action, "a");
+    }
+
+    #[test]
+    fn audit_log_pagination() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
+        db.migrate().unwrap();
+
+        for i in 0..5 {
+            db.store_audit_entry(&make_entry(&format!("action_{i}"), ActionResult::Success, "cleanup")).unwrap();
+        }
+
+        let filter = AuditFilter {
+            per_page: Some(2),
+            page: Some(1),
+            ..Default::default()
+        };
+        let page = db.get_audit_log(&filter).unwrap();
+        assert_eq!(page.entries.len(), 2);
+        assert_eq!(page.total_count, 5);
+        assert_eq!(page.total_pages, 3);
+    }
+
+    #[test]
+    fn audit_log_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
+        db.migrate().unwrap();
+
+        db.store_audit_entry(&make_entry("cleanup_cache", ActionResult::Success, "cleanup")).unwrap();
+        db.store_audit_entry(&make_entry("rotate_logs", ActionResult::Success, "logs")).unwrap();
+
+        let filter = AuditFilter {
+            search: Some("cache".into()),
+            ..Default::default()
+        };
+        let page = db.get_audit_log(&filter).unwrap();
+        assert_eq!(page.total_count, 1);
+    }
+
+    #[test]
+    fn mark_rolled_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
+        db.migrate().unwrap();
+
+        let entry = make_entry("cleanup", ActionResult::Success, "cleanup");
+        let id = entry.id.to_string();
+        db.store_audit_entry(&entry).unwrap();
+
+        db.mark_rolled_back(&id).unwrap();
+        let fetched = db.get_audit_entry(&id).unwrap().unwrap();
+        assert!(!fetched.rollback_available);
+    }
+
+    #[test]
+    fn export_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
+        db.migrate().unwrap();
+
+        db.store_audit_entry(&make_entry("test", ActionResult::Success, "cleanup")).unwrap();
+
+        let out = dir.path().join("export.json");
+        db.export_audit_log(ExportFormat::Json, &AuditFilter::default(), &out).unwrap();
+        let contents = std::fs::read_to_string(&out).unwrap();
+        assert!(contents.contains("\"action\": \"test\""));
+    }
+
+    #[test]
+    fn export_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("test.db"), "key").unwrap();
+        db.migrate().unwrap();
+
+        db.store_audit_entry(&make_entry("test", ActionResult::Success, "cleanup")).unwrap();
+
+        let out = dir.path().join("export.csv");
+        db.export_audit_log(ExportFormat::Csv, &AuditFilter::default(), &out).unwrap();
+        let contents = std::fs::read_to_string(&out).unwrap();
+        assert!(contents.contains("id,timestamp,action"));
+        assert!(contents.contains("test"));
     }
 }

@@ -1,4 +1,5 @@
 import { useSystemMetrics } from "../hooks/useSystemMetrics";
+import { CleanupCard } from "./CleanupCard";
 import { CpuCard } from "./CpuCard";
 import { DiskUsageCard } from "./DiskUsageCard";
 import { MemoryCard } from "./MemoryCard";
@@ -70,6 +71,10 @@ export function DashboardView() {
           <ProcessTable processes={processes} />
         </div>
       )}
+
+      <div className="mb-6">
+        <CleanupCard />
+      </div>
 
       <div className="border-t border-gray-800 pt-6">
         <RecommendationList />

@@ -316,10 +316,12 @@ pub struct AuditEntry {
     pub timestamp: DateTime<Utc>,
     pub action: String,
     pub target: String,
+    pub category: String,
     pub risk_level: RiskLevel,
     pub user_approved: bool,
     pub snapshot_id: Option<String>,
     pub result: ActionResult,
+    pub details: Option<String>,
     pub rollback_available: bool,
 }
 
@@ -332,6 +334,84 @@ pub struct DiskUsageReport {
     pub used_bytes: u64,
     pub available_bytes: u64,
     pub usage_percent: f64,
+}
+
+/// Describes a category of temporary files to clean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupTarget {
+    SystemTemp,
+    UserCache,
+    AppLogs,
+}
+
+/// A file that was skipped during cleanup (safety rules).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedFile {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Pre-execution report showing what a cleanup would do.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreflightReport {
+    pub target: CleanupTarget,
+    pub file_count: u64,
+    pub total_bytes: u64,
+    pub oldest_modified: Option<DateTime<Utc>>,
+    pub newest_modified: Option<DateTime<Utc>>,
+    pub skipped: Vec<SkippedFile>,
+}
+
+/// Progress update emitted during cleanup execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupProgress {
+    pub processed: u64,
+    pub total: u64,
+    pub current_file: String,
+    pub bytes_so_far: u64,
+}
+
+/// Summary returned after cleanup completes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupResult {
+    pub files_deleted: u64,
+    pub bytes_reclaimed: u64,
+    pub errors: Vec<String>,
+    pub skipped: Vec<SkippedFile>,
+    pub snapshot_id: String,
+    pub duration_ms: u64,
+}
+
+/// Filter for querying the audit log.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuditFilter {
+    pub status: Option<ActionResult>,
+    pub risk_level: Option<RiskLevel>,
+    pub category: Option<String>,
+    pub date_from: Option<DateTime<Utc>>,
+    pub date_to: Option<DateTime<Utc>>,
+    pub search: Option<String>,
+    pub page: Option<u32>,
+    pub per_page: Option<u32>,
+}
+
+/// Paginated audit log response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditPage {
+    pub entries: Vec<AuditEntry>,
+    pub total_count: u64,
+    pub page: u32,
+    pub per_page: u32,
+    pub total_pages: u32,
+}
+
+/// Export format for audit log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    Json,
+    Csv,
 }
 
 #[cfg(test)]
@@ -496,18 +576,47 @@ mod tests {
             timestamp: Utc::now(),
             action: "delete_cache".into(),
             target: "/tmp/cache".into(),
+            category: "cleanup".into(),
             risk_level: RiskLevel::Medium,
             user_approved: true,
             snapshot_id: Some("snap-001".into()),
             result: ActionResult::Success,
+            details: Some("Deleted 42 files, 1.2 GB reclaimed".into()),
             rollback_available: true,
         };
         let rt = roundtrip(&entry);
         assert_eq!(entry.action, rt.action);
+        assert_eq!(entry.category, rt.category);
         assert_eq!(entry.risk_level, rt.risk_level);
         assert_eq!(entry.user_approved, rt.user_approved);
         assert_eq!(entry.snapshot_id, rt.snapshot_id);
         assert_eq!(entry.result, rt.result);
+        assert_eq!(entry.details, rt.details);
+    }
+
+    #[test]
+    fn preflight_report_serde_roundtrip() {
+        let report = PreflightReport {
+            target: CleanupTarget::SystemTemp,
+            file_count: 100,
+            total_bytes: 1024 * 1024,
+            oldest_modified: Some(Utc::now()),
+            newest_modified: Some(Utc::now()),
+            skipped: vec![SkippedFile {
+                path: "/tmp/in_use.log".into(),
+                reason: "file in use".into(),
+            }],
+        };
+        let rt = roundtrip(&report);
+        assert_eq!(rt.file_count, 100);
+        assert_eq!(rt.skipped.len(), 1);
+    }
+
+    #[test]
+    fn audit_filter_defaults() {
+        let filter = AuditFilter::default();
+        assert!(filter.status.is_none());
+        assert!(filter.page.is_none());
     }
 
     #[test]
