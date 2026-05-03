@@ -4,8 +4,9 @@ mod commands;
 mod state;
 
 use commands::{
-    approve_recommendation, dismiss_recommendation, get_app_version, get_disk_usage,
-    get_recommendations, reject_recommendation, scan_system,
+    approve_recommendation, dismiss_recommendation, get_app_version, get_cpu_usage,
+    get_disk_usage, get_memory_usage, get_process_list, get_recommendations,
+    reject_recommendation, scan_system,
 };
 use state::AppState;
 
@@ -22,6 +23,9 @@ pub fn run() {
             dismiss_recommendation,
             approve_recommendation,
             reject_recommendation,
+            get_memory_usage,
+            get_cpu_usage,
+            get_process_list,
         ])
         .run(tauri::generate_context!())
         .expect("error running LSO");

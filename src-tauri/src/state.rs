@@ -20,10 +20,16 @@ impl AppState {
         let rules_dir = Self::rules_dir();
         let engine = if rules_dir.exists() {
             RuleEngine::load_rules(&rules_dir).unwrap_or_else(|_| {
-                RuleEngine::from_rules(vec![], lso_core::Platform::detect().unwrap_or(lso_core::Platform::MacOS))
+                RuleEngine::from_rules(
+                    vec![],
+                    lso_core::Platform::detect().unwrap_or(lso_core::Platform::MacOS),
+                )
             })
         } else {
-            RuleEngine::from_rules(vec![], lso_core::Platform::detect().unwrap_or(lso_core::Platform::MacOS))
+            RuleEngine::from_rules(
+                vec![],
+                lso_core::Platform::detect().unwrap_or(lso_core::Platform::MacOS),
+            )
         };
 
         Self {

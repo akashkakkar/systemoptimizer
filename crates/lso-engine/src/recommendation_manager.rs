@@ -20,6 +20,13 @@ impl RecommendationManager {
         Self { engine, db }
     }
 
+    /// Store probe metrics in the database.
+    pub fn store_metrics(&self, metrics: &[lso_core::SystemMetric]) -> Result<(), EngineError> {
+        self.db
+            .store_metrics(metrics)
+            .map_err(|e| EngineError::Storage(e.to_string()))
+    }
+
     /// Run all rules against probe data, deduplicate, and store new recommendations.
     pub fn scan(&self, probes: &[ProbeResult]) -> Result<Vec<Recommendation>, EngineError> {
         let mut raw_recs = self.engine.evaluate(probes);

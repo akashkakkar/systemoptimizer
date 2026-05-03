@@ -2,12 +2,12 @@ import { useEffect } from "react";
 import { useMetricsStore } from "../stores/metricsStore";
 
 export function useSystemMetrics() {
-  const { disks, loading, error, lastScan, fetchDiskUsage } =
+  const { disks, memory, cpu, processes, loading, error, lastScan, fetchAll } =
     useMetricsStore();
 
   useEffect(() => {
-    fetchDiskUsage();
-  }, [fetchDiskUsage]);
+    fetchAll();
+  }, [fetchAll]);
 
-  return { disks, loading, error, lastScan, refresh: fetchDiskUsage };
+  return { disks, memory, cpu, processes, loading, error, lastScan, refresh: fetchAll };
 }

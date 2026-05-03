@@ -1,0 +1,49 @@
+# Memory monitoring rules for LSO.
+
+[[rules]]
+id = "memory.usage_high"
+name = "High memory usage"
+description = "System RAM usage exceeds {threshold}%"
+category = "memory"
+enabled = true
+
+[rules.condition]
+probe = "sensor.memory.usage"
+metric = "usage_percent"
+operator = "greater_than"
+threshold = 90.0
+
+[rules.recommendation]
+title = "High memory usage ({value}%)"
+description = "System memory is {value}% utilized. Consider closing unused applications or identifying memory-hungry processes to free up RAM."
+risk_level = "medium"
+category = "performance"
+
+[rules.metadata]
+platforms = ["macos", "linux", "windows"]
+tags = ["memory", "ram", "performance"]
+priority = 75
+
+[[rules]]
+id = "memory.swap_active"
+name = "Swap usage active"
+description = "Swap usage exceeds {threshold}%"
+category = "memory"
+enabled = true
+
+[rules.condition]
+probe = "sensor.memory.usage"
+metric = "swap_percent"
+operator = "greater_than"
+threshold = 50.0
+
+[rules.recommendation]
+title = "High swap usage ({value}%)"
+description = "Swap is {value}% utilized, indicating memory pressure. The system may be slower due to disk-based paging. Close heavy applications or add more RAM."
+risk_level = "low"
+category = "performance"
+
+[rules.metadata]
+platforms = ["macos", "linux", "windows"]
+tags = ["memory", "swap", "performance"]
+priority = 60

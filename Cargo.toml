@@ -31,3 +31,4 @@ dirs = "6"
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 tempfile = "3"
 toml = "0.8"
+futures = "0.3"
