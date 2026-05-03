@@ -1,0 +1,31 @@
+[package]
+name = "lso-integration-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+lso-core = { path = "../crates/lso-core" }
+lso-sensor = { path = "../crates/lso-sensor" }
+lso-actuator = { path = "../crates/lso-actuator" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "common_mock_platform"
+path = "common/mock_platform.rs"
+
+[[test]]
+name = "common_sensor_registry"
+path = "common/sensor_registry.rs"
+
+[[test]]
+name = "macos_sensors"
+path = "macos/sensors.rs"
+
+[[test]]
+name = "linux_sensors"
+path = "linux/sensors.rs"
+
+[[test]]
+name = "windows_sensors"
+path = "windows/sensors.rs"

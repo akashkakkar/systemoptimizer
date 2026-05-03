@@ -98,10 +98,8 @@ impl SystemProbe for CpuProbe {
 fn collect_cpu(platform: Platform) -> Result<CpuInfo, SensorError> {
     match platform {
         Platform::Linux => collect_cpu_linux(),
-        _ => Err(SensorError::ProbeFailed {
-            probe: PROBE_ID.to_string(),
-            reason: format!("{platform} CPU probe not yet implemented"),
-        }),
+        Platform::MacOS => collect_cpu_macos(),
+        Platform::Windows => collect_cpu_windows(),
     }
 }
 
@@ -185,6 +183,156 @@ fn collect_cpu_linux() -> Result<CpuInfo, SensorError> {
     Err(SensorError::ProbeFailed {
         probe: PROBE_ID.to_string(),
         reason: "Linux CPU collection not available on this platform".to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// macOS — host_processor_info(PROCESSOR_CPU_LOAD_INFO) + getloadavg
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn collect_cpu_macos() -> Result<CpuInfo, SensorError> {
+    let mut load: [f64; 3] = [0.0; 3];
+    unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
+
+    let per_core_percent = macos_per_core_usage()?;
+    let core_count = per_core_percent.len() as u32;
+
+    Ok(CpuInfo {
+        core_count,
+        per_core_percent,
+        load_avg_1: load[0],
+        load_avg_5: load[1],
+        load_avg_15: load[2],
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_per_core_usage() -> Result<Vec<f64>, SensorError> {
+    extern "C" {
+        fn host_processor_info(
+            host: libc::mach_port_t,
+            flavor: libc::c_int,
+            out_count: *mut u32,
+            out_info: *mut *mut i32,
+            out_info_cnt: *mut u32,
+        ) -> libc::c_int;
+        fn vm_deallocate(
+            target: libc::mach_port_t,
+            address: libc::vm_address_t,
+            size: libc::vm_size_t,
+        ) -> libc::c_int;
+    }
+
+    const PROCESSOR_CPU_LOAD_INFO: libc::c_int = 2;
+    const CPU_STATE_USER: usize = 0;
+    const CPU_STATE_SYSTEM: usize = 1;
+    const CPU_STATE_IDLE: usize = 2;
+    const CPU_STATE_NICE: usize = 3;
+    const CPU_STATE_MAX: usize = 4;
+
+    #[allow(deprecated)]
+    let host = unsafe { libc::mach_host_self() };
+    let mut num_cpus: u32 = 0;
+    let mut cpu_info: *mut i32 = std::ptr::null_mut();
+    let mut num_info: u32 = 0;
+
+    let ret = unsafe {
+        host_processor_info(host, PROCESSOR_CPU_LOAD_INFO, &mut num_cpus, &mut cpu_info, &mut num_info)
+    };
+    if ret != 0 {
+        return Err(SensorError::ProbeFailed {
+            probe: PROBE_ID.to_string(),
+            reason: format!("host_processor_info failed: {ret}"),
+        });
+    }
+
+    let mut per_core = Vec::with_capacity(num_cpus as usize);
+    for i in 0..num_cpus as usize {
+        let base = i * CPU_STATE_MAX;
+        let user = unsafe { *cpu_info.add(base + CPU_STATE_USER) } as u64;
+        let system = unsafe { *cpu_info.add(base + CPU_STATE_SYSTEM) } as u64;
+        let idle = unsafe { *cpu_info.add(base + CPU_STATE_IDLE) } as u64;
+        let nice = unsafe { *cpu_info.add(base + CPU_STATE_NICE) } as u64;
+
+        let total = user + system + idle + nice;
+        let active = user + system + nice;
+
+        per_core.push(if total == 0 {
+            0.0
+        } else {
+            (active as f64 / total as f64) * 100.0
+        });
+    }
+
+    if !cpu_info.is_null() {
+        #[allow(deprecated)]
+        let task = unsafe { libc::mach_task_self() };
+        unsafe {
+            vm_deallocate(
+                task,
+                cpu_info as libc::vm_address_t,
+                num_info as libc::vm_size_t * std::mem::size_of::<i32>() as libc::vm_size_t,
+            );
+        }
+    }
+
+    Ok(per_core)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn collect_cpu_macos() -> Result<CpuInfo, SensorError> {
+    Err(SensorError::ProbeFailed {
+        probe: PROBE_ID.to_string(),
+        reason: "macOS CPU collection not available on this platform".to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Windows — GetSystemTimes + GetSystemInfo
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn collect_cpu_windows() -> Result<CpuInfo, SensorError> {
+    use windows_sys::Win32::System::SystemInformation::*;
+    use windows_sys::Win32::System::Threading::GetSystemTimes;
+
+    let mut sys_info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
+    unsafe { GetSystemInfo(&mut sys_info) };
+    let core_count = sys_info.dwNumberOfProcessors;
+
+    let mut idle: i64 = 0;
+    let mut kernel: i64 = 0;
+    let mut user: i64 = 0;
+    if unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } == 0 {
+        return Err(SensorError::ProbeFailed {
+            probe: PROBE_ID.to_string(),
+            reason: "GetSystemTimes failed".to_string(),
+        });
+    }
+
+    let total = kernel + user;
+    let active = total - idle;
+    let avg_usage = if total > 0 {
+        (active as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(CpuInfo {
+        core_count,
+        per_core_percent: vec![avg_usage; core_count as usize],
+        load_avg_1: avg_usage / 100.0 * core_count as f64,
+        load_avg_5: 0.0,
+        load_avg_15: 0.0,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn collect_cpu_windows() -> Result<CpuInfo, SensorError> {
+    Err(SensorError::ProbeFailed {
+        probe: PROBE_ID.to_string(),
+        reason: "Windows CPU collection not available on this platform".to_string(),
     })
 }
 

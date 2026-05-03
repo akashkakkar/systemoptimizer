@@ -103,13 +103,34 @@ fn collect_firewall_status(platform: Platform) -> FirewallStatus {
                 rule_count: 0,
             }
         }
-        _ => {
-            tracing::info!("firewall probe: stubbed on {platform}");
-            FirewallStatus {
-                enabled: false,
-                backend: FirewallBackend::Unknown,
-                default_policy: "unknown".into(),
-                rule_count: 0,
+        Platform::MacOS => {
+            #[cfg(target_os = "macos")]
+            {
+                detect_macos_firewall()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                FirewallStatus {
+                    enabled: false,
+                    backend: FirewallBackend::Unknown,
+                    default_policy: "unknown".into(),
+                    rule_count: 0,
+                }
+            }
+        }
+        Platform::Windows => {
+            #[cfg(target_os = "windows")]
+            {
+                detect_windows_firewall()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                FirewallStatus {
+                    enabled: false,
+                    backend: FirewallBackend::Unknown,
+                    default_policy: "unknown".into(),
+                    rule_count: 0,
+                }
             }
         }
     }
@@ -221,6 +242,141 @@ fn try_nftables() -> Option<FirewallStatus> {
         default_policy: "unknown".into(),
         rule_count,
     })
+}
+
+// ---------------------------------------------------------------------------
+// macOS — Application Layer Firewall (ALF) plist + pf status
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn detect_macos_firewall() -> FirewallStatus {
+    if let Some(s) = try_macos_alf() {
+        return s;
+    }
+    if let Some(s) = try_macos_pf() {
+        return s;
+    }
+    FirewallStatus {
+        enabled: false,
+        backend: FirewallBackend::Unknown,
+        default_policy: "unknown".into(),
+        rule_count: 0,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn try_macos_alf() -> Option<FirewallStatus> {
+    let plist_path = "/Library/Preferences/com.apple.alf.plist";
+    let content = std::fs::read_to_string(plist_path).ok()?;
+
+    let enabled = content.contains("<key>globalstate</key>")
+        && {
+            let pos = content.find("<key>globalstate</key>")?;
+            let after = &content[pos..];
+            after.contains("<integer>1</integer>") || after.contains("<integer>2</integer>")
+        };
+
+    Some(FirewallStatus {
+        enabled,
+        backend: FirewallBackend::Pf,
+        default_policy: if enabled { "deny" } else { "allow" }.into(),
+        rule_count: 0,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn try_macos_pf() -> Option<FirewallStatus> {
+    use std::process::Command;
+    let output = Command::new("pfctl")
+        .args(["-s", "info"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    let enabled = combined.contains("Status: Enabled");
+
+    let rule_count = Command::new("pfctl")
+        .args(["-s", "rules"])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count()
+        })
+        .unwrap_or(0);
+
+    Some(FirewallStatus {
+        enabled,
+        backend: FirewallBackend::Pf,
+        default_policy: if enabled { "block" } else { "pass" }.into(),
+        rule_count,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Windows — netsh advfirewall
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn detect_windows_firewall() -> FirewallStatus {
+    use std::process::Command;
+
+    let output = match Command::new("netsh")
+        .args(["advfirewall", "show", "currentprofile"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => {
+            return FirewallStatus {
+                enabled: false,
+                backend: FirewallBackend::WindowsFirewall,
+                default_policy: "unknown".into(),
+                rule_count: 0,
+            };
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let enabled = stdout.contains("State")
+        && stdout
+            .lines()
+            .any(|l| l.contains("State") && l.to_lowercase().contains("on"));
+
+    let inbound_policy = stdout
+        .lines()
+        .find(|l| l.contains("Firewall Policy") || l.contains("InboundPolicy"))
+        .map(|l| {
+            if l.to_lowercase().contains("block") {
+                "block"
+            } else {
+                "allow"
+            }
+        })
+        .unwrap_or("unknown");
+
+    let rule_count = Command::new("netsh")
+        .args(["advfirewall", "firewall", "show", "rule", "name=all"])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| l.starts_with("Rule Name:"))
+                .count()
+        })
+        .unwrap_or(0);
+
+    FirewallStatus {
+        enabled,
+        backend: FirewallBackend::WindowsFirewall,
+        default_policy: inbound_policy.into(),
+        rule_count,
+    }
 }
 
 #[cfg(test)]

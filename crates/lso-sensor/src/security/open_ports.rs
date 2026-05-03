@@ -112,9 +112,27 @@ fn collect_open_ports(platform: Platform) -> Result<Vec<OpenPort>, SensorError> 
                 Ok(Vec::new())
             }
         }
-        _ => {
-            tracing::info!("open ports probe: stubbed on {platform}");
-            Ok(Vec::new())
+        Platform::MacOS => {
+            #[cfg(target_os = "macos")]
+            {
+                collect_open_ports_macos()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                tracing::info!("open ports probe: cross-compiled stub for macOS");
+                Ok(Vec::new())
+            }
+        }
+        Platform::Windows => {
+            #[cfg(target_os = "windows")]
+            {
+                collect_open_ports_windows()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                tracing::info!("open ports probe: cross-compiled stub for Windows");
+                Ok(Vec::new())
+            }
         }
     }
 }
@@ -174,6 +192,130 @@ fn decode_hex_ip(hex: &str, protocol: &NetProtocol) -> String {
             format!("ipv6:{hex}")
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// macOS — parse `lsof -nP -iTCP -sTCP:LISTEN`
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn collect_open_ports_macos() -> Result<Vec<OpenPort>, SensorError> {
+    use lso_core::NetProtocol;
+    use std::process::Command;
+
+    let output = match Command::new("lsof")
+        .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut ports = Vec::new();
+    let mut current_pid: Option<u32> = None;
+    let mut current_name: Option<String> = None;
+
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix('p') {
+            current_pid = rest.parse().ok();
+        } else if let Some(rest) = line.strip_prefix('c') {
+            current_name = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix('n') {
+            if let Some(port_info) = parse_lsof_name(rest) {
+                ports.push(OpenPort {
+                    port: port_info.0,
+                    protocol: if port_info.1 { NetProtocol::Tcp6 } else { NetProtocol::Tcp },
+                    pid: current_pid,
+                    process_name: current_name.clone(),
+                    bind_address: port_info.2,
+                });
+            }
+        }
+    }
+
+    Ok(ports)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_lsof_name(name: &str) -> Option<(u16, bool, String)> {
+    // Format: "addr:port" or "[addr]:port" or "*:port"
+    let is_v6 = name.starts_with('[') || name.contains("::") || name.contains("IPv6");
+
+    let (addr, port_str) = if let Some(bracket_end) = name.find("]:") {
+        let addr = &name[1..bracket_end];
+        let port = &name[bracket_end + 2..];
+        (addr.to_string(), port)
+    } else if let Some(colon_pos) = name.rfind(':') {
+        let addr = &name[..colon_pos];
+        let port = &name[colon_pos + 1..];
+        (
+            if addr == "*" {
+                "0.0.0.0".to_string()
+            } else {
+                addr.to_string()
+            },
+            port,
+        )
+    } else {
+        return None;
+    };
+
+    let port: u16 = port_str.parse().ok()?;
+    Some((port, is_v6, addr))
+}
+
+// ---------------------------------------------------------------------------
+// Windows — parse `netstat -ano` output
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn collect_open_ports_windows() -> Result<Vec<OpenPort>, SensorError> {
+    use lso_core::NetProtocol;
+    use std::process::Command;
+
+    let output = match Command::new("netstat").args(["-ano"]).output() {
+        Ok(o) => o,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut ports = Vec::new();
+
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 4 {
+            continue;
+        }
+        if fields[3] != "LISTENING" {
+            continue;
+        }
+
+        let proto = match fields[0] {
+            "TCP" => NetProtocol::Tcp,
+            _ => continue,
+        };
+
+        if let Some((addr, port_str)) = fields[1].rsplit_once(':') {
+            if let Ok(port) = port_str.parse::<u16>() {
+                let pid = fields.get(4).and_then(|s| s.parse::<u32>().ok());
+                let bind = if addr.contains(':') { "::" } else { addr };
+                ports.push(OpenPort {
+                    port,
+                    protocol: if addr.contains(':') { NetProtocol::Tcp6 } else { proto },
+                    pid,
+                    process_name: None,
+                    bind_address: bind.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(ports)
 }
 
 #[cfg(test)]
