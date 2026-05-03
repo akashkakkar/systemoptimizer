@@ -188,6 +188,7 @@ impl RuleEngine {
 
         Recommendation {
             id: Uuid::new_v4(),
+            rule_id: rule.id.clone(),
             title,
             description,
             risk_level: rule.recommendation.risk_level,
@@ -195,6 +196,7 @@ impl RuleEngine {
             target: target.to_string(),
             rollback_plan: None,
             status: RecommendationStatus::Pending,
+            rejection_reason: None,
             created_at: Utc::now(),
             resolved_at: None,
         }
