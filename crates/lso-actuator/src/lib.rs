@@ -1,9 +1,9 @@
 //! LSO Actuator — gated executor with snapshot-before-mutate safety.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_compiles() {
-        assert!(true);
-    }
-}
+pub mod cleanup;
+pub mod snapshot;
+pub mod startup_disable;
+
+pub use cleanup::TempCleanupExecutor;
+pub use snapshot::SnapshotManager;
+pub use startup_disable::{DisableRequest, DisableResult, StartupDisableExecutor};

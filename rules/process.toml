@@ -1,0 +1,25 @@
+# Process monitoring rules for LSO.
+
+[[rules]]
+id = "process.high_cpu"
+name = "High CPU process"
+description = "A process is consuming more than {threshold}% CPU"
+category = "process"
+enabled = true
+
+[rules.condition]
+probe = "sensor.process.list"
+metric = "cpu_percent"
+operator = "greater_than"
+threshold = 80.0
+
+[rules.recommendation]
+title = "High CPU usage by {target}"
+description = "Process {target} is using {value}% CPU. If sustained for more than 5 minutes, consider investigating or killing the process."
+risk_level = "medium"
+category = "performance"
+
+[rules.metadata]
+platforms = ["macos", "linux", "windows"]
+tags = ["process", "cpu", "performance"]
+priority = 70

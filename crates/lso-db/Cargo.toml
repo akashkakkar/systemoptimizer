@@ -7,5 +7,14 @@ edition.workspace = true
 lso-core = { path = "../lso-core" }
 thiserror.workspace = true
 serde.workspace = true
-tokio.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+rusqlite.workspace = true
 tracing.workspace = true
+csv.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

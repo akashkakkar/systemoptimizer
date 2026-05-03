@@ -1,0 +1,43 @@
+# File Classification Rules (F18)
+# Configures thresholds for the file organization suggestion generator.
+
+[thresholds]
+# Files larger than 100 MB are flagged as "large unused" if not recently accessed.
+large_file_bytes = 104857600
+# Files unmodified for over 365 days are archive candidates.
+archive_after_days = 365
+# Minimum files of same type to consider them "scattered".
+scattered_group_min = 3
+# Minimum distinct parent directories for a scattered group.
+scattered_dir_min = 3
+
+[extensions]
+documents = [
+  "pdf", "doc", "docx", "odt", "rtf", "txt", "md", "tex",
+  "pages", "epub", "mobi", "xls", "xlsx", "ods", "ppt", "pptx", "odp",
+]
+media = [
+  "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp",
+  "ico", "heic", "heif", "raw", "cr2", "nef", "arw", "psd", "ai", "xcf",
+  "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg",
+  "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a", "opus", "aiff",
+]
+code = [
+  "rs", "py", "js", "ts", "jsx", "tsx", "c", "cpp", "h", "hpp",
+  "java", "go", "rb", "php", "swift", "kt", "scala", "cs", "lua",
+  "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd", "sql",
+  "toml", "yaml", "yml", "ini", "cfg", "conf", "lock",
+]
+archives = [
+  "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "zst", "lz4",
+  "lzma", "cab", "iso", "dmg", "pkg", "deb", "rpm",
+]
+data = [
+  "csv", "json", "jsonl", "xml", "parquet", "avro",
+  "sqlite", "db", "sqlite3", "hdf5", "h5",
+  "feather", "arrow", "npy", "npz", "pickle", "pkl", "tsv",
+]
+temporary = [
+  "tmp", "temp", "bak", "swp", "swo", "pyc", "pyo",
+  "o", "obj", "class", "cache", "log",
+]

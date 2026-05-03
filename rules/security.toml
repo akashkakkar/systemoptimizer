@@ -1,0 +1,84 @@
+[[rules]]
+id = "security.open_port_unexpected"
+name = "Unexpected Open Port"
+description = "A port is listening that is not in the expected service whitelist"
+category = "security"
+
+[rules.condition]
+probe = "sensor.security.open_ports"
+metric = "is_open"
+operator = "exists"
+
+[rules.recommendation]
+title = "Unexpected open port: {target}"
+description = "Port {target} is listening but is not in the expected service whitelist"
+risk_level = "medium"
+category = "security"
+
+[rules.metadata]
+tags = ["security", "network"]
+priority = 70
+
+[[rules]]
+id = "security.world_writable"
+name = "World-Writable Directory"
+description = "Sensitive directory is world-writable without sticky bit"
+category = "security"
+
+[rules.condition]
+probe = "sensor.security.permissions"
+metric = "world_writable"
+operator = "exists"
+
+[rules.recommendation]
+title = "World-writable directory: {target}"
+description = "{target} is world-writable without sticky bit, allowing any user to modify contents"
+risk_level = "high"
+category = "security"
+
+[rules.metadata]
+tags = ["security", "permissions"]
+priority = 80
+
+[[rules]]
+id = "security.firewall_disabled"
+name = "Firewall Disabled"
+description = "System firewall is not active"
+category = "security"
+
+[rules.condition]
+probe = "sensor.security.firewall"
+metric = "enabled"
+operator = "equal_to"
+threshold = 0.0
+
+[rules.recommendation]
+title = "System firewall is disabled"
+description = "System firewall is not active. Enable it to protect against unauthorized network access."
+risk_level = "high"
+category = "security"
+
+[rules.metadata]
+tags = ["security", "firewall"]
+priority = 90
+
+[[rules]]
+id = "security.ssh_key_permissions"
+name = "Insecure SSH Key Permissions"
+description = "SSH private key is readable by other users"
+category = "security"
+
+[rules.condition]
+probe = "sensor.security.permissions"
+metric = "insecure_ssh_key"
+operator = "exists"
+
+[rules.recommendation]
+title = "Insecure SSH key: {target}"
+description = "SSH private key at {target} is readable by other users, compromising key security"
+risk_level = "critical"
+category = "security"
+
+[rules.metadata]
+tags = ["security", "ssh"]
+priority = 95

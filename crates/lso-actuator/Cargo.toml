@@ -8,5 +8,23 @@ lso-core = { path = "../lso-core" }
 lso-db = { path = "../lso-db" }
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+dirs.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+filetime.workspace = true
