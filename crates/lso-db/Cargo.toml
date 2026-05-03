@@ -12,6 +12,7 @@ chrono.workspace = true
 uuid.workspace = true
 rusqlite.workspace = true
 tracing.workspace = true
+csv.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

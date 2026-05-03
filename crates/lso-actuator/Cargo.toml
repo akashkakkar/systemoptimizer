@@ -8,5 +8,14 @@ lso-core = { path = "../lso-core" }
 lso-db = { path = "../lso-db" }
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+filetime.workspace = true

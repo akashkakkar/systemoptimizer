@@ -6,6 +6,9 @@ pub enum DbError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("database connection mutex poisoned")]
     LockPoisoned,
 }

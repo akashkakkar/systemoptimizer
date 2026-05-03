@@ -1,7 +1,7 @@
 //! Application state managed by Tauri.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use lso_db::Database;
 use lso_engine::{RecommendationManager, RuleEngine};
@@ -9,12 +9,15 @@ use lso_engine::{RecommendationManager, RuleEngine};
 /// Shared application state accessible from Tauri commands.
 pub struct AppState {
     pub recommendation_manager: Mutex<RecommendationManager>,
+    pub db: Arc<Database>,
 }
 
 impl AppState {
     pub fn init() -> Self {
         let db_path = Self::db_path();
-        let db = Database::open(&db_path, "lso-default-key").expect("failed to open database");
+        let db = Arc::new(
+            Database::open(&db_path, "lso-default-key").expect("failed to open database"),
+        );
         db.migrate().expect("failed to migrate database");
 
         let rules_dir = Self::rules_dir();
@@ -32,8 +35,13 @@ impl AppState {
             )
         };
 
+        let rec_db = Database::open(&db_path, "lso-default-key")
+            .expect("failed to open recommendation database");
+        rec_db.migrate().expect("failed to migrate recommendation database");
+
         Self {
-            recommendation_manager: Mutex::new(RecommendationManager::new(engine, db)),
+            recommendation_manager: Mutex::new(RecommendationManager::new(engine, rec_db)),
+            db,
         }
     }
 

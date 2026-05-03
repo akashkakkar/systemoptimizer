@@ -19,6 +19,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("../migrations/002_recommendation_lifecycle.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("../migrations/003_audit_log_enhancements.sql"),
+    },
 ];
 
 /// Ensure the schema_version table exists, then apply any pending migrations.
