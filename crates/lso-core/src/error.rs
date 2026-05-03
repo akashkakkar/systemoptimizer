@@ -11,6 +11,8 @@ pub enum LsoError {
     Engine(#[from] EngineError),
     #[error("Actuator error: {0}")]
     Actuator(#[from] ActuatorError),
+    #[error("AI error: {0}")]
+    Ai(#[from] AiError),
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
     #[error("Platform not supported: {0}")]
@@ -47,6 +49,18 @@ pub enum EngineError {
     EvaluationFailed { rule: String, reason: String },
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
+}
+
+#[derive(Error, Debug)]
+pub enum AiError {
+    #[error("LLM unavailable: {0}")]
+    Unavailable(String),
+    #[error("LLM request failed: {0}")]
+    RequestFailed(String),
+    #[error("LLM response parse error: {0}")]
+    ParseError(String),
+    #[error("LLM request timed out")]
+    Timeout,
 }
 
 #[derive(Error, Debug)]
