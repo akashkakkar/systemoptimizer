@@ -1,9 +1,9 @@
 //! LSO Actuator — gated executor with snapshot-before-mutate safety.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_compiles() {
-        assert!(true);
-    }
-}
+pub mod pipeline;
+pub mod registry;
+pub mod snapshot;
+
+pub use pipeline::ExecutionPipeline;
+pub use registry::ActuatorRegistry;
+pub use snapshot::TarSnapshotProvider;
