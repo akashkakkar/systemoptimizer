@@ -29,6 +29,12 @@ pub async fn get_app_version() -> String {
 #[tauri::command]
 pub async fn scan_system(state: State<'_, AppState>) -> Result<Vec<Recommendation>, String> {
     let probes = lso_sensor::collect_all_probes();
+
+    {
+        let mut stored = state.latest_probes.lock().map_err(|e| e.to_string())?;
+        *stored = probes.clone();
+    }
+
     let mgr = state.recommendation_manager.lock().map_err(|e| e.to_string())?;
 
     for probe_result in &probes {
@@ -324,6 +330,54 @@ pub async fn rollback_action(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Generate an AI explanation for a recommendation.
+#[tauri::command]
+pub async fn explain_recommendation(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    let rec = state
+        .db
+        .get_recommendation(&id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("recommendation not found: {id}"))?;
+
+    let probes = state
+        .latest_probes
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let svc = state.explanation_service.clone();
+    svc.explain(&rec, &probes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Regenerate an AI explanation (invalidates cache first).
+#[tauri::command]
+pub async fn regenerate_explanation(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    let rec = state
+        .db
+        .get_recommendation(&id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("recommendation not found: {id}"))?;
+
+    let probes = state
+        .latest_probes
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let svc = state.explanation_service.clone();
+    svc.regenerate(&rec, &probes)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn snapshot_dir() -> PathBuf {

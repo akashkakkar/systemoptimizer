@@ -4,10 +4,10 @@ mod commands;
 mod state;
 
 use commands::{
-    approve_recommendation, dismiss_recommendation, execute_cleanup, export_audit_log,
-    get_app_version, get_audit_log, get_cpu_usage, get_disk_usage, get_memory_usage,
-    get_process_list, get_recommendations, preflight_cleanup, reject_recommendation,
-    rollback_action, scan_system,
+    approve_recommendation, dismiss_recommendation, execute_cleanup, explain_recommendation,
+    export_audit_log, get_app_version, get_audit_log, get_cpu_usage, get_disk_usage,
+    get_memory_usage, get_process_list, get_recommendations, preflight_cleanup,
+    regenerate_explanation, reject_recommendation, rollback_action, scan_system,
 };
 use state::AppState;
 
@@ -32,6 +32,8 @@ pub fn run() {
             get_audit_log,
             export_audit_log,
             rollback_action,
+            explain_recommendation,
+            regenerate_explanation,
         ])
         .run(tauri::generate_context!())
         .expect("error running LSO");

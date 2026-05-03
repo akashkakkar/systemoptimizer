@@ -11,12 +11,16 @@ interface RecommendationsState {
   loading: boolean;
   error: string | null;
   filter: RecommendationStatus | "all";
+  explanations: Record<string, string>;
+  explanationLoading: Record<string, boolean>;
   setFilter: (filter: RecommendationStatus | "all") => void;
   scanSystem: () => Promise<void>;
   fetchRecommendations: () => Promise<void>;
   approveRecommendation: (id: string) => Promise<ApprovalResponse>;
   rejectRecommendation: (id: string, reason?: string) => Promise<void>;
   dismissRecommendation: (id: string) => Promise<void>;
+  fetchExplanation: (id: string) => Promise<void>;
+  regenerateExplanation: (id: string) => Promise<void>;
 }
 
 export const useRecommendationsStore = create<RecommendationsState>((set, get) => ({
@@ -24,6 +28,8 @@ export const useRecommendationsStore = create<RecommendationsState>((set, get) =
   loading: false,
   error: null,
   filter: "all",
+  explanations: {},
+  explanationLoading: {},
 
   setFilter: (filter) => set({ filter }),
 
@@ -63,5 +69,39 @@ export const useRecommendationsStore = create<RecommendationsState>((set, get) =
   dismissRecommendation: async (id: string) => {
     await invoke("dismiss_recommendation", { id });
     await get().fetchRecommendations();
+  },
+
+  fetchExplanation: async (id: string) => {
+    set((s) => ({
+      explanationLoading: { ...s.explanationLoading, [id]: true },
+    }));
+    try {
+      const text = await invoke<string>("explain_recommendation", { id });
+      set((s) => ({
+        explanations: { ...s.explanations, [id]: text },
+        explanationLoading: { ...s.explanationLoading, [id]: false },
+      }));
+    } catch {
+      set((s) => ({
+        explanationLoading: { ...s.explanationLoading, [id]: false },
+      }));
+    }
+  },
+
+  regenerateExplanation: async (id: string) => {
+    set((s) => ({
+      explanationLoading: { ...s.explanationLoading, [id]: true },
+    }));
+    try {
+      const text = await invoke<string>("regenerate_explanation", { id });
+      set((s) => ({
+        explanations: { ...s.explanations, [id]: text },
+        explanationLoading: { ...s.explanationLoading, [id]: false },
+      }));
+    } catch {
+      set((s) => ({
+        explanationLoading: { ...s.explanationLoading, [id]: false },
+      }));
+    }
   },
 }));

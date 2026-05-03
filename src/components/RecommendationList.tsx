@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRecommendationsStore } from "../stores/recommendationsStore";
 import type {
   Recommendation,
@@ -149,30 +149,128 @@ function RecommendationCard({
   recommendation: Recommendation;
   onSelect: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const { explanations, explanationLoading, fetchExplanation, regenerateExplanation } =
+    useRecommendationsStore();
+
+  const explanation = explanations[recommendation.id];
+  const isLoading = explanationLoading[recommendation.id] ?? false;
+
+  const handleToggle = useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !explanation && !isLoading) {
+      fetchExplanation(recommendation.id);
+    }
+  }, [expanded, explanation, isLoading, fetchExplanation, recommendation.id]);
+
+  const handleRegenerate = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      regenerateExplanation(recommendation.id);
+    },
+    [regenerateExplanation, recommendation.id],
+  );
+
   return (
-    <div className="border border-gray-700 rounded-lg p-4 bg-gray-800/50 hover:border-gray-600 transition-colors">
-      <div className="flex items-start justify-between">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span
-              className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${RISK_COLORS[recommendation.risk_level]}`}
-            >
-              {recommendation.risk_level}
-            </span>
-            <span className="text-xs text-gray-500 truncate">{recommendation.target}</span>
+    <div className="border border-gray-700 rounded-lg bg-gray-800/50 hover:border-gray-600 transition-colors">
+      <div className="p-4">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${RISK_COLORS[recommendation.risk_level]}`}
+              >
+                {recommendation.risk_level}
+              </span>
+              <span className="text-xs text-gray-500 truncate">{recommendation.target}</span>
+            </div>
+            <h4 className="font-medium text-gray-100 text-sm">{recommendation.title}</h4>
+            <p className="text-xs text-gray-400 mt-1 line-clamp-2">
+              {recommendation.description}
+            </p>
           </div>
-          <h4 className="font-medium text-gray-100 text-sm">{recommendation.title}</h4>
-          <p className="text-xs text-gray-400 mt-1 line-clamp-2">{recommendation.description}</p>
+          <div className="flex items-center gap-2 shrink-0 ml-3">
+            <button
+              onClick={handleToggle}
+              className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                expanded
+                  ? "bg-purple-600/20 text-purple-400 border border-purple-600/40"
+                  : "bg-gray-700/50 text-gray-400 border border-gray-600/40 hover:bg-gray-700"
+              }`}
+              title="AI Explanation"
+            >
+              {isLoading ? (
+                <LoadingSpinner />
+              ) : (
+                <span>AI Explain</span>
+              )}
+            </button>
+            {recommendation.status === "pending" && (
+              <button
+                onClick={onSelect}
+                className="px-3 py-1.5 bg-blue-600/10 text-blue-400 border border-blue-600/30 rounded-md text-xs font-medium hover:bg-blue-600/20"
+              >
+                Review
+              </button>
+            )}
+          </div>
         </div>
-        {recommendation.status === "pending" && (
-          <button
-            onClick={onSelect}
-            className="ml-3 px-3 py-1.5 bg-blue-600/10 text-blue-400 border border-blue-600/30 rounded-md text-xs font-medium hover:bg-blue-600/20 shrink-0"
-          >
-            Review
-          </button>
-        )}
       </div>
+
+      {expanded && (
+        <div className="border-t border-gray-700 px-4 py-3 bg-gray-900/30">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-purple-400 uppercase tracking-wide">
+              AI Explanation
+            </span>
+            <button
+              onClick={handleRegenerate}
+              disabled={isLoading}
+              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40 transition-colors"
+              title="Regenerate explanation"
+            >
+              Regenerate
+            </button>
+          </div>
+          {isLoading ? (
+            <div className="flex items-center gap-2 py-2">
+              <LoadingSpinner />
+              <span className="text-xs text-gray-500">Generating explanation...</span>
+            </div>
+          ) : explanation ? (
+            <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+              {explanation}
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 italic">No explanation available.</p>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function LoadingSpinner() {
+  return (
+    <svg
+      className="animate-spin h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
   );
 }

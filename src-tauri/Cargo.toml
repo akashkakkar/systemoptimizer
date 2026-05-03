@@ -12,8 +12,11 @@ lso-core = { path = "../crates/lso-core" }
 lso-sensor = { path = "../crates/lso-sensor" }
 lso-engine = { path = "../crates/lso-engine" }
 lso-actuator = { path = "../crates/lso-actuator" }
+lso-ai = { path = "../crates/lso-ai" }
 lso-db = { path = "../crates/lso-db" }
 tauri = { version = "2", features = [] }
+tokio.workspace = true
+tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dirs.workspace = true

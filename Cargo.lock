@@ -1918,6 +1918,7 @@ dependencies = [
  "chrono",
  "dirs",
  "lso-actuator",
+ "lso-ai",
  "lso-core",
  "lso-db",
  "lso-engine",
@@ -1926,6 +1927,8 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
