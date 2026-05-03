@@ -1,9 +1,11 @@
 //! LSO Engine — rule engine and recommendation generator.
 
 pub mod evaluator;
+pub mod recommendation_manager;
 pub mod rule;
 
 pub use evaluator::RuleEngine;
+pub use recommendation_manager::RecommendationManager;
 pub use rule::{Condition, Operator, Rule, RuleMetadata, RuleRecommendation};
 
 use thiserror::Error;
@@ -31,4 +33,7 @@ pub enum EngineError {
         path: String,
         source: toml::de::Error,
     },
+
+    #[error("storage error: {0}")]
+    Storage(String),
 }

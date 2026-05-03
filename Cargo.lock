@@ -1822,7 +1822,10 @@ dependencies = [
 name = "lso-app"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "lso-core",
+ "lso-db",
+ "lso-engine",
  "lso-sensor",
  "serde",
  "serde_json",
@@ -1867,6 +1870,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "lso-core",
+ "lso-db",
  "serde",
  "tempfile",
  "thiserror 2.0.18",

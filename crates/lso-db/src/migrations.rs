@@ -10,10 +10,16 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../migrations/001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../migrations/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../migrations/002_recommendation_lifecycle.sql"),
+    },
+];
 
 /// Ensure the schema_version table exists, then apply any pending migrations.
 pub fn run(conn: &Connection) -> DbResult<()> {

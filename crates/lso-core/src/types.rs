@@ -21,6 +21,16 @@ impl RiskLevel {
             Self::Critical => "critical",
         }
     }
+
+    /// Elevate risk by one level (system drive modifier).
+    pub fn elevate(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Critical,
+            Self::Critical => Self::Critical,
+        }
+    }
 }
 
 impl std::fmt::Display for RiskLevel {
@@ -117,23 +127,39 @@ impl std::fmt::Display for ApprovalStatus {
     }
 }
 
-/// Lifecycle status of a recommendation, tracked by the DB layer.
+/// Full lifecycle status of a recommendation.
+///
+/// ```text
+/// Pending → [Approved | Rejected | Expired]
+///                ↓
+///            Executing → [Succeeded | Failed]
+///                              ↓ (if failed)
+///                          RolledBack
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum RecommendationStatus {
     Pending,
-    Accepted,
-    Dismissed,
-    Applied,
+    Approved,
+    Rejected,
+    Expired,
+    Executing,
+    Succeeded,
+    Failed,
+    RolledBack,
 }
 
 impl RecommendationStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
-            Self::Accepted => "accepted",
-            Self::Dismissed => "dismissed",
-            Self::Applied => "applied",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Expired => "expired",
+            Self::Executing => "executing",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::RolledBack => "rolled_back",
         }
     }
 }
@@ -150,9 +176,13 @@ impl std::str::FromStr for RecommendationStatus {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "pending" => Ok(Self::Pending),
-            "accepted" => Ok(Self::Accepted),
-            "dismissed" => Ok(Self::Dismissed),
-            "applied" => Ok(Self::Applied),
+            "approved" => Ok(Self::Approved),
+            "rejected" => Ok(Self::Rejected),
+            "expired" => Ok(Self::Expired),
+            "executing" => Ok(Self::Executing),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "rolled_back" => Ok(Self::RolledBack),
             other => Err(format!("unknown recommendation status: {other}")),
         }
     }
@@ -199,6 +229,7 @@ impl std::str::FromStr for ActionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recommendation {
     pub id: Uuid,
+    pub rule_id: String,
     pub title: String,
     pub description: String,
     pub risk_level: RiskLevel,
@@ -206,8 +237,58 @@ pub struct Recommendation {
     pub target: String,
     pub rollback_plan: Option<String>,
     pub status: RecommendationStatus,
+    pub rejection_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub resolved_at: Option<DateTime<Utc>>,
+}
+
+impl Recommendation {
+    /// Deduplication key: same rule + same target = same recommendation.
+    pub fn dedup_key(&self) -> String {
+        format!("{}::{}", self.rule_id, self.target)
+    }
+
+    /// Transition to Approved state. Returns false if transition is invalid.
+    pub fn approve(&mut self) -> bool {
+        if self.status != RecommendationStatus::Pending {
+            return false;
+        }
+        if self.risk_level == RiskLevel::Critical {
+            return false;
+        }
+        self.status = RecommendationStatus::Approved;
+        self.resolved_at = Some(Utc::now());
+        true
+    }
+
+    /// Transition to Rejected state with optional reason.
+    pub fn reject(&mut self, reason: Option<String>) -> bool {
+        if self.status != RecommendationStatus::Pending {
+            return false;
+        }
+        self.status = RecommendationStatus::Rejected;
+        self.rejection_reason = reason;
+        self.resolved_at = Some(Utc::now());
+        true
+    }
+
+    /// Transition to Expired state (condition resolved).
+    pub fn expire(&mut self) -> bool {
+        if self.status != RecommendationStatus::Pending {
+            return false;
+        }
+        self.status = RecommendationStatus::Expired;
+        self.resolved_at = Some(Utc::now());
+        true
+    }
+}
+
+/// Result of an approval action returned to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalResponse {
+    pub id: Uuid,
+    pub status: RecommendationStatus,
+    pub requires_double_confirm: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,7 +410,10 @@ mod tests {
 
     #[test]
     fn recommendation_status_roundtrip() {
-        for s in ["pending", "accepted", "dismissed", "applied"] {
+        for s in [
+            "pending", "approved", "rejected", "expired", "executing",
+            "succeeded", "failed", "rolled_back",
+        ] {
             let status: RecommendationStatus = s.parse().unwrap();
             assert_eq!(status.as_str(), s);
         }
@@ -347,6 +431,7 @@ mod tests {
     fn recommendation_serde_roundtrip() {
         let rec = Recommendation {
             id: Uuid::new_v4(),
+            rule_id: "disk.cleanup".into(),
             title: "Remove cache".into(),
             description: "Clear stale build cache".into(),
             risk_level: RiskLevel::Low,
@@ -354,6 +439,7 @@ mod tests {
             target: "/tmp/build-cache".into(),
             rollback_plan: Some("Restore from snapshot".into()),
             status: RecommendationStatus::Pending,
+            rejection_reason: None,
             created_at: Utc::now(),
             resolved_at: None,
         };

@@ -80,15 +80,19 @@ impl Database {
     pub fn store_recommendation(&self, rec: &Recommendation) -> DbResult<()> {
         let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
         conn.execute(
-            "INSERT OR REPLACE INTO recommendations (id, title, description, risk_level, category, status, created_at, resolved_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO recommendations (id, rule_id, title, description, risk_level, category, target, rollback_plan, status, rejection_reason, created_at, resolved_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 rec.id.to_string(),
+                rec.rule_id,
                 rec.title,
                 rec.description,
                 rec.risk_level.as_str(),
                 rec.category,
+                rec.target,
+                rec.rollback_plan,
                 rec.status.as_str(),
+                rec.rejection_reason,
                 rec.created_at.to_rfc3339(),
                 rec.resolved_at.map(|t| t.to_rfc3339()),
             ],
@@ -146,38 +150,93 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
     }
 
-    /// Get all recommendations with status 'pending'.
+    /// Get all recommendations, optionally filtered by status.
+    pub fn get_recommendations(
+        &self,
+        status_filter: Option<RecommendationStatus>,
+    ) -> DbResult<Vec<Recommendation>> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match status_filter {
+            Some(status) => (
+                "SELECT id, rule_id, title, description, risk_level, category, target, rollback_plan, status, rejection_reason, created_at, resolved_at
+                 FROM recommendations WHERE status = ?1 ORDER BY created_at DESC",
+                vec![Box::new(status.as_str().to_string())],
+            ),
+            None => (
+                "SELECT id, rule_id, title, description, risk_level, category, target, rollback_plan, status, rejection_reason, created_at, resolved_at
+                 FROM recommendations ORDER BY created_at DESC",
+                vec![],
+            ),
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), Self::row_to_recommendation)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
+    }
+
+    /// Get all recommendations with status 'pending' (convenience method).
     pub fn get_pending_recommendations(&self) -> DbResult<Vec<Recommendation>> {
+        self.get_recommendations(Some(RecommendationStatus::Pending))
+    }
+
+    /// Find a recommendation by its dedup key (rule_id + target).
+    pub fn find_by_dedup_key(&self, rule_id: &str, target: &str) -> DbResult<Option<Recommendation>> {
         let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, description, risk_level, category, status, created_at, resolved_at
-             FROM recommendations
-             WHERE status = 'pending'
-             ORDER BY created_at DESC",
+            "SELECT id, rule_id, title, description, risk_level, category, target, rollback_plan, status, rejection_reason, created_at, resolved_at
+             FROM recommendations WHERE rule_id = ?1 AND target = ?2 AND status = 'pending' LIMIT 1",
         )?;
-        let rows = stmt.query_map([], |row| {
-            let resolved_str: Option<String> = row.get(7)?;
-            Ok(Recommendation {
-                id: row
-                    .get::<_, String>(0)?
-                    .parse::<Uuid>()
-                    .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
-                title: row.get(1)?,
-                description: row.get(2)?,
-                risk_level: parse_enum::<RiskLevel>(&row.get::<_, String>(3)?, 3)?,
-                category: row.get(4)?,
-                target: String::new(),
-                rollback_plan: None,
-                status: parse_enum::<RecommendationStatus>(&row.get::<_, String>(5)?, 5)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                    .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?
-                    .with_timezone(&Utc),
-                resolved_at: resolved_str
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                    .map(|dt| dt.with_timezone(&Utc)),
-            })
+        let mut rows = stmt.query_map(rusqlite::params![rule_id, target], |row| {
+            Self::row_to_recommendation(row)
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
+        match rows.next() {
+            Some(Ok(rec)) => Ok(Some(rec)),
+            Some(Err(e)) => Err(DbError::from(e)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get a single recommendation by ID.
+    pub fn get_recommendation(&self, id: &str) -> DbResult<Option<Recommendation>> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, rule_id, title, description, risk_level, category, target, rollback_plan, status, rejection_reason, created_at, resolved_at
+             FROM recommendations WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Self::row_to_recommendation(row)
+        })?;
+        match rows.next() {
+            Some(Ok(rec)) => Ok(Some(rec)),
+            Some(Err(e)) => Err(DbError::from(e)),
+            None => Ok(None),
+        }
+    }
+
+    fn row_to_recommendation(row: &rusqlite::Row<'_>) -> Result<Recommendation, rusqlite::Error> {
+        let resolved_str: Option<String> = row.get(11)?;
+        Ok(Recommendation {
+            id: row
+                .get::<_, String>(0)?
+                .parse::<Uuid>()
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
+            rule_id: row.get(1)?,
+            title: row.get(2)?,
+            description: row.get(3)?,
+            risk_level: parse_enum::<RiskLevel>(&row.get::<_, String>(4)?, 4)?,
+            category: row.get(5)?,
+            target: row.get(6)?,
+            rollback_plan: row.get(7)?,
+            status: parse_enum::<RecommendationStatus>(&row.get::<_, String>(8)?, 8)?,
+            rejection_reason: row.get(9)?,
+            created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, Box::new(e)))?
+                .with_timezone(&Utc),
+            resolved_at: resolved_str
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+        })
     }
 }
 
@@ -240,13 +299,15 @@ mod tests {
 
         let rec = Recommendation {
             id: Uuid::new_v4(),
+            rule_id: "disk.cleanup".into(),
             title: "Clean temp files".into(),
             description: "Remove stale temp files to reclaim 2 GB".into(),
             risk_level: RiskLevel::Low,
             category: "disk".into(),
             target: "/tmp".into(),
-            rollback_plan: None,
+            rollback_plan: Some("Restore from snapshot".into()),
             status: RecommendationStatus::Pending,
+            rejection_reason: None,
             created_at: Utc::now(),
             resolved_at: None,
         };
@@ -255,6 +316,8 @@ mod tests {
         let pending = db.get_pending_recommendations().unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].title, "Clean temp files");
+        assert_eq!(pending[0].rule_id, "disk.cleanup");
+        assert_eq!(pending[0].target, "/tmp");
     }
 
     #[test]

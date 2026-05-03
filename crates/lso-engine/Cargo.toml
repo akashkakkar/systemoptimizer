@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 lso-core = { path = "../lso-core" }
+lso-db = { path = "../lso-db" }
 chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true

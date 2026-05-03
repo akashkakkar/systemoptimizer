@@ -1,5 +1,6 @@
 import { useSystemMetrics } from "../hooks/useSystemMetrics";
 import { DiskUsageCard } from "./DiskUsageCard";
+import { RecommendationList } from "./RecommendationList";
 
 export function DashboardView() {
   const { disks, loading, error, lastScan, refresh } = useSystemMetrics();
@@ -54,6 +55,10 @@ export function DashboardView() {
           ))}
         </div>
       )}
+
+      <div className="mt-8 border-t border-gray-800 pt-6">
+        <RecommendationList />
+      </div>
     </main>
   );
 }
