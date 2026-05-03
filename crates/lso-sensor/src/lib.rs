@@ -2,6 +2,7 @@
 
 pub mod cpu;
 mod disk_usage;
+pub mod file_classifier;
 pub mod memory;
 mod platform;
 pub mod process;
@@ -11,6 +12,7 @@ pub use cpu::{CpuInfo, CpuProbe, PROBE_ID as CPU_PROBE_ID};
 pub use disk_usage::{get_disk_reports, DiskUsageProbe, PROBE_ID as DISK_USAGE_PROBE_ID};
 pub use memory::{MemoryInfo, MemoryProbe, PROBE_ID as MEMORY_PROBE_ID};
 pub use process::{ProcessInfo, ProcessListProbe, PROBE_ID as PROCESS_PROBE_ID};
+pub use file_classifier::{classify_by_extension, FileClassificationProbe};
 pub use registry::SensorRegistry;
 
 use lso_core::{Platform, ProbeResult};

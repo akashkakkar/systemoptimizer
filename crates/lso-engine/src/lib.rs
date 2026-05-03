@@ -1,10 +1,12 @@
 //! LSO Engine — rule engine and recommendation generator.
 
 pub mod evaluator;
+pub mod file_suggestions;
 pub mod recommendation_manager;
 pub mod rule;
 
 pub use evaluator::RuleEngine;
+pub use file_suggestions::{FileSuggestionGenerator, FileThresholds};
 pub use recommendation_manager::RecommendationManager;
 pub use rule::{Condition, Operator, Rule, RuleMetadata, RuleRecommendation};
 

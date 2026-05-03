@@ -414,6 +414,123 @@ pub enum ExportFormat {
     Csv,
 }
 
+// ---------------------------------------------------------------------------
+// File classification (F18)
+// ---------------------------------------------------------------------------
+
+/// High-level file category for classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileCategory {
+    Documents,
+    Media,
+    Code,
+    Archives,
+    Data,
+    Temporary,
+    Unknown,
+}
+
+impl std::fmt::Display for FileCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Documents => write!(f, "Documents"),
+            Self::Media => write!(f, "Media"),
+            Self::Code => write!(f, "Code"),
+            Self::Archives => write!(f, "Archives"),
+            Self::Data => write!(f, "Data"),
+            Self::Temporary => write!(f, "Temporary"),
+            Self::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// Metadata about a single file (never reads content for classification).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileInfo {
+    pub path: std::path::PathBuf,
+    pub category: FileCategory,
+    pub extension: Option<String>,
+    pub size_bytes: u64,
+    pub created: Option<DateTime<Utc>>,
+    pub modified: Option<DateTime<Utc>>,
+    pub accessed: Option<DateTime<Utc>>,
+    /// SHA-256 hex digest — only populated when duplicate detection is opted-in.
+    pub content_hash: Option<String>,
+}
+
+/// Configuration for a file classification scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanConfig {
+    /// Directories the user has explicitly approved for scanning.
+    pub directories: Vec<std::path::PathBuf>,
+    /// Whether to compute SHA-256 hashes for duplicate detection.
+    pub detect_duplicates: bool,
+    /// Maximum directory depth (None = unlimited).
+    pub max_depth: Option<usize>,
+}
+
+/// Progress update emitted during a file classification scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanProgress {
+    pub files_scanned: u64,
+    pub files_total_estimate: Option<u64>,
+    pub current_directory: std::path::PathBuf,
+    pub bytes_scanned: u64,
+}
+
+/// Complete result of a file classification scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationResult {
+    pub scan_id: Uuid,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+    pub files: Vec<FileInfo>,
+    pub category_summary: std::collections::HashMap<FileCategory, CategoryStats>,
+    pub duplicate_clusters: Vec<DuplicateCluster>,
+}
+
+/// Aggregate stats for one file category.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CategoryStats {
+    pub count: u64,
+    pub total_bytes: u64,
+}
+
+/// A group of files sharing the same content hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateCluster {
+    pub hash: String,
+    pub files: Vec<std::path::PathBuf>,
+    pub file_size: u64,
+    pub wasted_bytes: u64,
+}
+
+/// Sanitized file summary safe for inclusion in AI prompts (no full paths).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SanitizedFileSummary {
+    pub category: FileCategory,
+    pub extension: Option<String>,
+    pub size_bytes: u64,
+    pub age_days: u64,
+}
+
+impl SanitizedFileSummary {
+    /// Build from a `FileInfo`, stripping the full path.
+    pub fn from_file_info(info: &FileInfo, now: DateTime<Utc>) -> Self {
+        let age_days = info
+            .modified
+            .map(|m| (now - m).num_days().unsigned_abs())
+            .unwrap_or(0);
+        Self {
+            category: info.category,
+            extension: info.extension.clone(),
+            size_bytes: info.size_bytes,
+            age_days,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,5 +742,39 @@ mod tests {
         assert_eq!(Platform::MacOS.to_string(), "macOS");
         assert_eq!(PrivilegeLevel::Root.to_string(), "Root");
         assert_eq!(ApprovalStatus::Expired.to_string(), "Expired");
+    }
+
+    #[test]
+    fn file_category_display() {
+        assert_eq!(FileCategory::Documents.to_string(), "Documents");
+        assert_eq!(FileCategory::Unknown.to_string(), "Unknown");
+    }
+
+    #[test]
+    fn file_category_serde_roundtrip() {
+        let cat = FileCategory::Media;
+        let json = serde_json::to_string(&cat).unwrap();
+        assert_eq!(json, "\"media\"");
+        let back: FileCategory = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cat);
+    }
+
+    #[test]
+    fn sanitized_summary_strips_path() {
+        let info = FileInfo {
+            path: std::path::PathBuf::from("/Users/secret/Documents/report.pdf"),
+            category: FileCategory::Documents,
+            extension: Some("pdf".into()),
+            size_bytes: 1024,
+            created: None,
+            modified: Some(Utc::now() - chrono::Duration::days(30)),
+            accessed: None,
+            content_hash: None,
+        };
+        let summary = SanitizedFileSummary::from_file_info(&info, Utc::now());
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("/Users"));
+        assert!(summary.age_days >= 29 && summary.age_days <= 31);
     }
 }
