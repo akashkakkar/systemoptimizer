@@ -531,6 +531,200 @@ impl SanitizedFileSummary {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Startup items (F19)
+// ---------------------------------------------------------------------------
+
+/// A single startup/login item discovered by a probe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupItem {
+    pub name: String,
+    pub item_type: StartupType,
+    pub command: String,
+    pub enabled: bool,
+    pub publisher: Option<String>,
+    pub impact: StartupImpact,
+    /// Platform-specific identifier used to disable/enable the item.
+    pub platform_id: String,
+}
+
+/// How the item is registered to start at boot/login.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupType {
+    SystemdService,
+    DesktopAutostart,
+    LaunchAgent,
+    LaunchDaemon,
+    RegistryRun,
+    ScheduledTask,
+}
+
+impl std::fmt::Display for StartupType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SystemdService => f.write_str("systemd service"),
+            Self::DesktopAutostart => f.write_str("desktop autostart"),
+            Self::LaunchAgent => f.write_str("launch agent"),
+            Self::LaunchDaemon => f.write_str("launch daemon"),
+            Self::RegistryRun => f.write_str("registry run key"),
+            Self::ScheduledTask => f.write_str("scheduled task"),
+        }
+    }
+}
+
+/// Estimated boot-time impact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StartupImpact {
+    Low,
+    Medium,
+    High,
+    Unknown,
+}
+
+// ---------------------------------------------------------------------------
+// Security posture (F20)
+// ---------------------------------------------------------------------------
+
+/// A listening network port.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenPort {
+    pub port: u16,
+    pub protocol: NetProtocol,
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
+    pub bind_address: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetProtocol {
+    Tcp,
+    Tcp6,
+    Udp,
+    Udp6,
+}
+
+impl std::fmt::Display for NetProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tcp => f.write_str("tcp"),
+            Self::Tcp6 => f.write_str("tcp6"),
+            Self::Udp => f.write_str("udp"),
+            Self::Udp6 => f.write_str("udp6"),
+        }
+    }
+}
+
+/// A file/directory permission issue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionIssue {
+    pub path: std::path::PathBuf,
+    pub issue_type: PermissionIssueType,
+    pub current_mode: u32,
+    pub recommended_mode: Option<u32>,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionIssueType {
+    WorldWritable,
+    SuidBinary,
+    SgidBinary,
+    OverlyPermissiveHome,
+    InsecureSshKey,
+}
+
+impl std::fmt::Display for PermissionIssueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WorldWritable => f.write_str("world-writable"),
+            Self::SuidBinary => f.write_str("SUID binary"),
+            Self::SgidBinary => f.write_str("SGID binary"),
+            Self::OverlyPermissiveHome => f.write_str("overly permissive home"),
+            Self::InsecureSshKey => f.write_str("insecure SSH key"),
+        }
+    }
+}
+
+/// Firewall status report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirewallStatus {
+    pub enabled: bool,
+    pub backend: FirewallBackend,
+    pub default_policy: String,
+    pub rule_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FirewallBackend {
+    Iptables,
+    Nftables,
+    Ufw,
+    Pf,
+    WindowsFirewall,
+    Unknown,
+}
+
+impl std::fmt::Display for FirewallBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Iptables => f.write_str("iptables"),
+            Self::Nftables => f.write_str("nftables"),
+            Self::Ufw => f.write_str("ufw"),
+            Self::Pf => f.write_str("pf"),
+            Self::WindowsFirewall => f.write_str("Windows Firewall"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+
+/// Aggregated result from all security probes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityScanResult {
+    pub open_ports: Vec<OpenPort>,
+    pub permission_issues: Vec<PermissionIssue>,
+    pub firewall: FirewallStatus,
+    /// 0–100, higher is better.
+    pub score: u8,
+}
+
+/// Compute a security score from 0 (terrible) to 100 (clean).
+///
+/// Deductions:
+/// - Firewall disabled: −30
+/// - Each unexpected open port: −5 (max −25)
+/// - Each non-SSH permission issue: −5 (max −25)
+/// - Each insecure SSH key: −10 (max −20)
+pub fn compute_security_score(
+    firewall: &FirewallStatus,
+    open_ports: &[OpenPort],
+    permission_issues: &[PermissionIssue],
+) -> u8 {
+    let mut score: i32 = 100;
+
+    if !firewall.enabled {
+        score -= 30;
+    }
+
+    let port_penalty = (open_ports.len() as i32 * 5).min(25);
+    score -= port_penalty;
+
+    let ssh_issues = permission_issues
+        .iter()
+        .filter(|p| p.issue_type == PermissionIssueType::InsecureSshKey)
+        .count();
+    let other_issues = permission_issues.len() - ssh_issues;
+
+    score -= (ssh_issues as i32 * 10).min(20);
+    score -= (other_issues as i32 * 5).min(25);
+
+    score.clamp(0, 100) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,5 +970,95 @@ mod tests {
         assert!(!json.contains("secret"));
         assert!(!json.contains("/Users"));
         assert!(summary.age_days >= 29 && summary.age_days <= 31);
+    }
+
+    #[test]
+    fn startup_item_serde_roundtrip() {
+        let item = StartupItem {
+            name: "docker".into(),
+            item_type: StartupType::SystemdService,
+            command: "/usr/bin/dockerd".into(),
+            enabled: true,
+            publisher: Some("Docker Inc".into()),
+            impact: StartupImpact::Medium,
+            platform_id: "docker.service".into(),
+        };
+        let rt = roundtrip(&item);
+        assert_eq!(rt.name, "docker");
+        assert_eq!(rt.item_type, StartupType::SystemdService);
+    }
+
+    #[test]
+    fn open_port_serde_roundtrip() {
+        let port = OpenPort {
+            port: 8080,
+            protocol: NetProtocol::Tcp,
+            pid: Some(1234),
+            process_name: Some("nginx".into()),
+            bind_address: "0.0.0.0".into(),
+        };
+        let rt = roundtrip(&port);
+        assert_eq!(rt.port, 8080);
+        assert_eq!(rt.process_name.as_deref(), Some("nginx"));
+    }
+
+    #[test]
+    fn security_score_perfect() {
+        let fw = FirewallStatus {
+            enabled: true,
+            backend: FirewallBackend::Ufw,
+            default_policy: "deny".into(),
+            rule_count: 3,
+        };
+        assert_eq!(compute_security_score(&fw, &[], &[]), 100);
+    }
+
+    #[test]
+    fn security_score_firewall_disabled() {
+        let fw = FirewallStatus {
+            enabled: false,
+            backend: FirewallBackend::Unknown,
+            default_policy: "none".into(),
+            rule_count: 0,
+        };
+        assert_eq!(compute_security_score(&fw, &[], &[]), 70);
+    }
+
+    #[test]
+    fn security_score_clamps_to_zero() {
+        let fw = FirewallStatus {
+            enabled: false,
+            backend: FirewallBackend::Unknown,
+            default_policy: "none".into(),
+            rule_count: 0,
+        };
+        let ports: Vec<OpenPort> = (0..20)
+            .map(|i| OpenPort {
+                port: 8000 + i,
+                protocol: NetProtocol::Tcp,
+                pid: None,
+                process_name: None,
+                bind_address: "0.0.0.0".into(),
+            })
+            .collect();
+        let mut perms: Vec<PermissionIssue> = (0..20)
+            .map(|i| PermissionIssue {
+                path: format!("/tmp/bad{i}").into(),
+                issue_type: PermissionIssueType::WorldWritable,
+                current_mode: 0o777,
+                recommended_mode: Some(0o755),
+                description: "world-writable".into(),
+            })
+            .collect();
+        for i in 0..5 {
+            perms.push(PermissionIssue {
+                path: format!("/home/user/.ssh/id_rsa_{i}").into(),
+                issue_type: PermissionIssueType::InsecureSshKey,
+                current_mode: 0o644,
+                recommended_mode: Some(0o600),
+                description: "insecure SSH key".into(),
+            });
+        }
+        assert_eq!(compute_security_score(&fw, &ports, &perms), 0);
     }
 }

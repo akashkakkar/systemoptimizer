@@ -1,0 +1,66 @@
+[[rules]]
+id = "startup.unknown_publisher"
+name = "Unknown Publisher"
+description = "Startup item from unknown or missing publisher"
+category = "startup"
+
+[rules.condition]
+probe = "sensor.startup"
+metric = "has_publisher"
+operator = "equal_to"
+threshold = 0.0
+
+[rules.recommendation]
+title = "Review startup item: {target}"
+description = "Startup item '{target}' has no known publisher — may indicate unwanted software"
+risk_level = "medium"
+category = "startup"
+
+[rules.metadata]
+platforms = ["linux"]
+tags = ["startup", "security"]
+priority = 60
+
+[[rules]]
+id = "startup.high_count"
+name = "High Startup Count"
+description = "More than 15 enabled startup items may slow boot time"
+category = "startup"
+
+[rules.condition]
+probe = "sensor.startup"
+metric = "enabled_count"
+operator = "greater_than"
+threshold = 15.0
+
+[rules.recommendation]
+title = "Too many startup items ({value})"
+description = "System has {value} enabled startup items (threshold: {threshold}). Disable unnecessary items to improve boot time."
+risk_level = "low"
+category = "startup"
+
+[rules.metadata]
+tags = ["startup", "performance"]
+priority = 40
+
+[[rules]]
+id = "startup.duplicate"
+name = "Duplicate Startup Items"
+description = "Multiple startup items running the same command"
+category = "startup"
+
+[rules.condition]
+probe = "sensor.startup"
+metric = "duplicate_count"
+operator = "greater_than"
+threshold = 0.0
+
+[rules.recommendation]
+title = "Duplicate startup items detected ({value} groups)"
+description = "{value} groups of startup items share the same command. Remove duplicates to save resources."
+risk_level = "low"
+category = "startup"
+
+[rules.metadata]
+tags = ["startup", "cleanup"]
+priority = 30

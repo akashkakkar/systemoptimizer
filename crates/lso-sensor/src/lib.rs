@@ -7,6 +7,8 @@ pub mod memory;
 mod platform;
 pub mod process;
 pub mod registry;
+pub mod security;
+pub mod startup;
 
 pub use cpu::{CpuInfo, CpuProbe, PROBE_ID as CPU_PROBE_ID};
 pub use disk_usage::{get_disk_reports, DiskUsageProbe, PROBE_ID as DISK_USAGE_PROBE_ID};
@@ -14,6 +16,11 @@ pub use memory::{MemoryInfo, MemoryProbe, PROBE_ID as MEMORY_PROBE_ID};
 pub use process::{ProcessInfo, ProcessListProbe, PROBE_ID as PROCESS_PROBE_ID};
 pub use file_classifier::{classify_by_extension, FileClassificationProbe};
 pub use registry::SensorRegistry;
+pub use startup::{StartupProbe, PROBE_ID as STARTUP_PROBE_ID};
+pub use security::{
+    FirewallProbe, OpenPortsProbe, PermissionsProbe,
+    FIREWALL_PROBE_ID, OPEN_PORTS_PROBE_ID, PERMISSIONS_PROBE_ID,
+};
 
 use lso_core::{Platform, ProbeResult};
 
@@ -31,6 +38,18 @@ pub fn build_registry() -> SensorRegistry {
         registry.register(Box::new(probe));
     }
     if let Ok(probe) = CpuProbe::for_host() {
+        registry.register(Box::new(probe));
+    }
+    if let Ok(probe) = StartupProbe::for_host() {
+        registry.register(Box::new(probe));
+    }
+    if let Ok(probe) = OpenPortsProbe::for_host() {
+        registry.register(Box::new(probe));
+    }
+    if let Ok(probe) = PermissionsProbe::for_host() {
+        registry.register(Box::new(probe));
+    }
+    if let Ok(probe) = FirewallProbe::for_host() {
         registry.register(Box::new(probe));
     }
 
