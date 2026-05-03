@@ -32,5 +32,6 @@ rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 tempfile = "3"
 toml = "0.8"
 futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 filetime = "0.2"
 csv = "1"
