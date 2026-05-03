@@ -13,8 +13,11 @@ tracing.workspace = true
 async-trait.workspace = true
 reqwest.workspace = true
 futures.workspace = true
+sha2.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 chrono.workspace = true
 uuid.workspace = true
+tempfile.workspace = true

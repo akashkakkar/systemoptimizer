@@ -1,9 +1,11 @@
 //! LSO DB — SQLCipher storage layer for persistent data.
 
 mod error;
+mod explanation_cache;
 mod migrations;
 
 pub use error::{DbError, DbResult};
+pub use explanation_cache::SqlCipherExplanationCache;
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -374,6 +376,54 @@ impl Database {
                 wtr.flush().map_err(|e| DbError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
             }
         }
+        Ok(())
+    }
+
+    /// Look up a cached explanation for `rec_id`. Returns `None` if no
+    /// row exists or if the stored `data_hash` differs from `data_hash`
+    /// (the cached entry is stale and should be regenerated).
+    pub fn get_explanation(&self, rec_id: &str, data_hash: &str) -> DbResult<Option<String>> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT data_hash, explanation FROM explanation_cache WHERE rec_id = ?1",
+                rusqlite::params![rec_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        Ok(row
+            .filter(|(h, _)| h == data_hash)
+            .map(|(_, e)| e))
+    }
+
+    /// Insert or replace the cached explanation for `rec_id`.
+    pub fn put_explanation(
+        &self,
+        rec_id: &str,
+        data_hash: &str,
+        explanation: &str,
+    ) -> DbResult<()> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO explanation_cache (rec_id, data_hash, explanation, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(rec_id) DO UPDATE SET
+                data_hash = excluded.data_hash,
+                explanation = excluded.explanation,
+                updated_at = excluded.updated_at",
+            rusqlite::params![rec_id, data_hash, explanation, now],
+        )?;
+        Ok(())
+    }
+
+    /// Drop any cached explanation for `rec_id`.
+    pub fn invalidate_explanation(&self, rec_id: &str) -> DbResult<()> {
+        let conn = self.conn.lock().map_err(|_| DbError::LockPoisoned)?;
+        conn.execute(
+            "DELETE FROM explanation_cache WHERE rec_id = ?1",
+            rusqlite::params![rec_id],
+        )?;
         Ok(())
     }
 

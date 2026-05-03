@@ -35,3 +35,4 @@ futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 filetime = "0.2"
 csv = "1"
+sha2 = "0.10"

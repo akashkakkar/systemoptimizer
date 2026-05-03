@@ -4,6 +4,18 @@ use async_trait::async_trait;
 use crate::error::{ActuatorError, SensorError};
 use crate::types::{CleanupProgress, PreflightReport, PrivilegeLevel, ProbeResult, RiskLevel};
 
+/// Persistent cache for LLM-generated explanations. Keyed by the
+/// recommendation id (stringified UUID) and a hash of the underlying
+/// probe data, so an explanation is reused only while its inputs are
+/// unchanged. Backed by SQLCipher in production; in-memory and JSON
+/// implementations exist for tests.
+#[async_trait]
+pub trait ExplanationCache: Send + Sync {
+    async fn get(&self, rec_id: &str, data_hash: &str) -> Option<String>;
+    async fn put(&self, rec_id: &str, data_hash: &str, explanation: &str);
+    async fn invalidate(&self, rec_id: &str);
+}
+
 /// A system probe that collects metrics from the local machine.
 #[async_trait]
 pub trait SystemProbe: Send + Sync {

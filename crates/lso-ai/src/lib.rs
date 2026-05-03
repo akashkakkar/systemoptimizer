@@ -4,8 +4,17 @@
 //! human-readable explanations for system recommendations. Gracefully
 //! degrades to raw rule text when no LLM is available.
 
+pub mod context;
+pub mod explanation;
 pub mod ollama;
 pub mod prompts;
+pub mod rag;
+
+pub use explanation::ExplanationService;
+pub use rag::{
+    chunk_paragraphs, ingest_directory, ingest_rule_toml, ingest_text, Chunk, IngestStats,
+    OnDiskVectorStore, RagRetriever, RetrievedChunk, VectorStore,
+};
 
 use async_trait::async_trait;
 use lso_core::{AiError, Recommendation};
@@ -54,6 +63,23 @@ pub trait LlmProvider: Send + Sync {
 
     /// The name of the model currently configured.
     fn model_name(&self) -> &str;
+}
+
+/// Trait for embedding providers used by the RAG pipeline. Kept
+/// separate from [`LlmProvider`] because not every text-generation
+/// backend exposes embeddings.
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    /// Embed `text` into a fixed-dimension dense vector.
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, AiError>;
+
+    /// Length of vectors returned by [`embed`].
+    ///
+    /// [`embed`]: EmbeddingProvider::embed
+    fn embedding_dim(&self) -> usize;
+
+    /// The embedding model identifier (for diagnostics).
+    fn embedding_model(&self) -> &str;
 }
 
 /// High-level AI service that wraps a provider and handles fallback.

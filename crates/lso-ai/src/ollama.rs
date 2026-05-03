@@ -7,12 +7,20 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{AiConfig, LlmProvider, ModelInfo};
+use crate::{AiConfig, EmbeddingProvider, LlmProvider, ModelInfo};
+
+/// Default embedding model. nomic-embed-text returns 768-dim vectors;
+/// override via [`OllamaBackend::with_embedding_model`].
+const DEFAULT_EMBED_MODEL: &str = "nomic-embed-text";
+/// Default embedding dimensionality for `nomic-embed-text`.
+const DEFAULT_EMBED_DIM: usize = 768;
 
 /// Ollama HTTP API client. Restricted to localhost connections only.
 pub struct OllamaBackend {
     client: Client,
     config: AiConfig,
+    embedding_model: String,
+    embedding_dim: usize,
 }
 
 #[derive(Serialize)]
@@ -46,6 +54,17 @@ struct OllamaModel {
     modified_at: String,
 }
 
+#[derive(Serialize)]
+struct EmbedRequest<'a> {
+    model: &'a str,
+    prompt: &'a str,
+}
+
+#[derive(Deserialize)]
+struct EmbedResponse {
+    embedding: Vec<f32>,
+}
+
 impl OllamaBackend {
     /// Create a new Ollama backend from the given config.
     ///
@@ -64,7 +83,20 @@ impl OllamaBackend {
             .build()
             .map_err(|e| AiError::RequestFailed(e.to_string()))?;
 
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            config,
+            embedding_model: DEFAULT_EMBED_MODEL.into(),
+            embedding_dim: DEFAULT_EMBED_DIM,
+        })
+    }
+
+    /// Override the embedding model. The dim must match the model's
+    /// output (nomic-embed-text → 768, mxbai-embed-large → 1024, etc.).
+    pub fn with_embedding_model(mut self, model: impl Into<String>, dim: usize) -> Self {
+        self.embedding_model = model.into();
+        self.embedding_dim = dim;
+        self
     }
 
     /// List models available on the local Ollama instance.
@@ -245,6 +277,56 @@ impl LlmProvider for OllamaBackend {
 
     fn model_name(&self) -> &str {
         &self.config.model
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for OllamaBackend {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, AiError> {
+        let url = format!("{}/api/embeddings", self.config.base_url());
+        let body = EmbedRequest {
+            model: &self.embedding_model,
+            prompt: text,
+        };
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    AiError::Timeout
+                } else {
+                    AiError::RequestFailed(e.to_string())
+                }
+            })?;
+        if !resp.status().is_success() {
+            return Err(AiError::RequestFailed(format!(
+                "embeddings returned {}",
+                resp.status()
+            )));
+        }
+        let parsed: EmbedResponse = resp
+            .json()
+            .await
+            .map_err(|e| AiError::ParseError(e.to_string()))?;
+        if parsed.embedding.len() != self.embedding_dim {
+            return Err(AiError::ParseError(format!(
+                "expected {} dims, got {}",
+                self.embedding_dim,
+                parsed.embedding.len()
+            )));
+        }
+        Ok(parsed.embedding)
+    }
+
+    fn embedding_dim(&self) -> usize {
+        self.embedding_dim
+    }
+
+    fn embedding_model(&self) -> &str {
+        &self.embedding_model
     }
 }
 
