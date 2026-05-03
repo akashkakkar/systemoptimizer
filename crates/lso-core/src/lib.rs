@@ -1,11 +1,13 @@
 //! LSO Core — shared types, traits, and error definitions.
 
 pub mod error;
+pub mod mock;
 pub mod platform;
 pub mod traits;
 pub mod types;
 
 pub use error::*;
+pub use mock::MockPlatform;
 pub use platform::*;
 pub use traits::*;
 pub use types::*;

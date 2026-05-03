@@ -67,6 +67,32 @@ impl StartupDisableExecutor {
                     });
                 }
             }
+            StartupType::LaunchAgent | StartupType::LaunchDaemon => {
+                #[cfg(target_os = "macos")]
+                {
+                    verify_launchctl_label_exists(&request.platform_id)?;
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    return Err(ActuatorError::ExecutionFailed {
+                        action: "preflight".into(),
+                        reason: "LaunchAgent/Daemon requires macOS".into(),
+                    });
+                }
+            }
+            StartupType::RegistryRun => {
+                #[cfg(target_os = "windows")]
+                {
+                    verify_registry_run_exists(&request.platform_id)?;
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    return Err(ActuatorError::ExecutionFailed {
+                        action: "preflight".into(),
+                        reason: "registry run keys require Windows".into(),
+                    });
+                }
+            }
             other => {
                 return Err(ActuatorError::ExecutionFailed {
                     action: "preflight".into(),
@@ -106,6 +132,32 @@ impl StartupDisableExecutor {
                     })
                 }
             }
+            StartupType::LaunchAgent | StartupType::LaunchDaemon => {
+                #[cfg(target_os = "macos")]
+                {
+                    disable_launchctl(&request.platform_id)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Err(ActuatorError::ExecutionFailed {
+                        action: "disable".into(),
+                        reason: "LaunchAgent/Daemon requires macOS".into(),
+                    })
+                }
+            }
+            StartupType::RegistryRun => {
+                #[cfg(target_os = "windows")]
+                {
+                    disable_registry_run(&request.platform_id)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Err(ActuatorError::ExecutionFailed {
+                        action: "disable".into(),
+                        reason: "registry run keys require Windows".into(),
+                    })
+                }
+            }
             other => Err(ActuatorError::ExecutionFailed {
                 action: "disable".into(),
                 reason: format!("not implemented for {other}"),
@@ -137,6 +189,30 @@ impl StartupDisableExecutor {
                 {
                     Err(ActuatorError::RollbackFailed(
                         "XDG autostart requires Unix".into(),
+                    ))
+                }
+            }
+            StartupType::LaunchAgent | StartupType::LaunchDaemon => {
+                #[cfg(target_os = "macos")]
+                {
+                    enable_launchctl(&request.platform_id)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Err(ActuatorError::RollbackFailed(
+                        "LaunchAgent/Daemon requires macOS".into(),
+                    ))
+                }
+            }
+            StartupType::RegistryRun => {
+                #[cfg(target_os = "windows")]
+                {
+                    enable_registry_run(&request.platform_id)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Err(ActuatorError::RollbackFailed(
+                        "registry run keys require Windows".into(),
                     ))
                 }
             }
@@ -274,6 +350,161 @@ fn enable_desktop_autostart(file_stem: &str) -> Result<DisableResult, ActuatorEr
     Ok(DisableResult::ReEnabled {
         description: format!("Re-enabled autostart item '{file_stem}'"),
     })
+}
+
+// --- macOS LaunchAgent/LaunchDaemon operations ---
+
+#[cfg(target_os = "macos")]
+fn verify_launchctl_label_exists(label: &str) -> Result<(), ActuatorError> {
+    let output = std::process::Command::new("launchctl")
+        .args(["print", &format!("gui/{}/{label}", unsafe { libc::getuid() })])
+        .output()
+        .map_err(|e| ActuatorError::ExecutionFailed {
+            action: "preflight".into(),
+            reason: format!("failed to run launchctl: {e}"),
+        })?;
+
+    if !output.status.success() {
+        let output2 = std::process::Command::new("launchctl")
+            .args(["print", &format!("system/{label}")])
+            .output()
+            .map_err(|e| ActuatorError::ExecutionFailed {
+                action: "preflight".into(),
+                reason: format!("failed to run launchctl: {e}"),
+            })?;
+
+        if !output2.status.success() {
+            return Err(ActuatorError::ExecutionFailed {
+                action: "preflight".into(),
+                reason: format!("launch item '{label}' not found"),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn disable_launchctl(label: &str) -> Result<DisableResult, ActuatorError> {
+    let uid = unsafe { libc::getuid() };
+    let domain_target = format!("gui/{uid}/{label}");
+
+    let output = std::process::Command::new("launchctl")
+        .args(["disable", &domain_target])
+        .output()
+        .map_err(|e| ActuatorError::ExecutionFailed {
+            action: "disable".into(),
+            reason: e.to_string(),
+        })?;
+
+    if output.status.success() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["bootout", &format!("gui/{uid}"), &domain_target])
+            .output();
+
+        Ok(DisableResult::Disabled {
+            description: format!("Disabled launch item '{label}'"),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Ok(DisableResult::Failed {
+            error: format!("launchctl disable failed: {stderr}"),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn enable_launchctl(label: &str) -> Result<DisableResult, ActuatorError> {
+    let uid = unsafe { libc::getuid() };
+    let domain_target = format!("gui/{uid}/{label}");
+
+    let output = std::process::Command::new("launchctl")
+        .args(["enable", &domain_target])
+        .output()
+        .map_err(|e| ActuatorError::ExecutionFailed {
+            action: "rollback".into(),
+            reason: e.to_string(),
+        })?;
+
+    if output.status.success() {
+        Ok(DisableResult::ReEnabled {
+            description: format!("Re-enabled launch item '{label}'"),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(ActuatorError::RollbackFailed(format!(
+            "failed to re-enable '{label}': {stderr}"
+        )))
+    }
+}
+
+// --- Windows registry startup operations ---
+
+#[cfg(target_os = "windows")]
+fn verify_registry_run_exists(name: &str) -> Result<(), ActuatorError> {
+    use windows_sys::Win32::System::Registry::*;
+    use windows_sys::Win32::Foundation::*;
+
+    let subkey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let subkey_w: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut hkey: HKEY = 0;
+
+    let ret = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) };
+    if ret != ERROR_SUCCESS {
+        return Err(ActuatorError::ExecutionFailed {
+            action: "preflight".into(),
+            reason: "cannot open Run registry key".into(),
+        });
+    }
+
+    let ret = unsafe { RegQueryValueExW(hkey, name_w.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    unsafe { RegCloseKey(hkey) };
+
+    if ret != ERROR_SUCCESS {
+        return Err(ActuatorError::ExecutionFailed {
+            action: "preflight".into(),
+            reason: format!("registry value '{name}' not found"),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn disable_registry_run(name: &str) -> Result<DisableResult, ActuatorError> {
+    use windows_sys::Win32::System::Registry::*;
+    use windows_sys::Win32::Foundation::*;
+
+    let subkey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let subkey_w: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut hkey: HKEY = 0;
+
+    let ret = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey_w.as_ptr(), 0, KEY_ALL_ACCESS, &mut hkey) };
+    if ret != ERROR_SUCCESS {
+        return Ok(DisableResult::Failed {
+            error: "cannot open registry key for writing".into(),
+        });
+    }
+
+    let ret = unsafe { RegDeleteValueW(hkey, name_w.as_ptr()) };
+    unsafe { RegCloseKey(hkey) };
+
+    if ret == ERROR_SUCCESS {
+        Ok(DisableResult::Disabled {
+            description: format!("Removed registry Run entry '{name}'"),
+        })
+    } else {
+        Ok(DisableResult::Failed {
+            error: format!("RegDeleteValueW failed: {ret}"),
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn enable_registry_run(_name: &str) -> Result<DisableResult, ActuatorError> {
+    Err(ActuatorError::RollbackFailed(
+        "registry run rollback requires snapshot restore (value was deleted)".into(),
+    ))
 }
 
 #[cfg(test)]

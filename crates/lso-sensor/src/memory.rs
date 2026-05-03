@@ -91,10 +91,8 @@ impl SystemProbe for MemoryProbe {
 fn collect_memory(platform: Platform) -> Result<MemoryInfo, SensorError> {
     match platform {
         Platform::Linux => collect_memory_linux(),
-        _ => Err(SensorError::ProbeFailed {
-            probe: PROBE_ID.to_string(),
-            reason: format!("{platform} memory probe not yet implemented"),
-        }),
+        Platform::MacOS => collect_memory_macos(),
+        Platform::Windows => collect_memory_windows(),
     }
 }
 
@@ -158,6 +156,209 @@ fn collect_memory_linux() -> Result<MemoryInfo, SensorError> {
     Err(SensorError::ProbeFailed {
         probe: PROBE_ID.to_string(),
         reason: "Linux memory collection not available on this platform".to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// macOS — host_statistics64(HOST_VM_INFO64) + sysctl hw.memsize / vm.swapusage
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+fn collect_memory_macos() -> Result<MemoryInfo, SensorError> {
+    let total_bytes = macos_sysctl_u64(c"hw.memsize")?;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+
+    let vm = macos_vm_stats()?;
+    let used_pages = vm.active_count as u64 + vm.wire_count as u64 + vm.compressor_page_count as u64;
+    let used_bytes = used_pages * page_size;
+    let available_bytes = total_bytes.saturating_sub(used_bytes);
+
+    let (swap_total, swap_used) = macos_swap_usage();
+
+    let usage_percent = if total_bytes > 0 {
+        (used_bytes as f64 / total_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
+    let swap_percent = if swap_total > 0 {
+        (swap_used as f64 / swap_total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(MemoryInfo {
+        total_bytes,
+        used_bytes,
+        available_bytes,
+        swap_total_bytes: swap_total,
+        swap_used_bytes: swap_used,
+        usage_percent,
+        swap_percent,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_sysctl_u64(name: &std::ffi::CStr) -> Result<u64, SensorError> {
+    let mut val: u64 = 0;
+    let mut size = std::mem::size_of::<u64>();
+    if unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut val as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return Err(SensorError::Io(std::io::Error::last_os_error()));
+    }
+    Ok(val)
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct VmStatistics64 {
+    free_count: u32,
+    active_count: u32,
+    inactive_count: u32,
+    wire_count: u32,
+    zero_fill_count: u64,
+    reactivations: u64,
+    pageins: u64,
+    pageouts: u64,
+    faults: u64,
+    cow_faults: u64,
+    lookups: u64,
+    hits: u64,
+    purges: u64,
+    purgeable_count: u32,
+    speculative_count: u32,
+    decompressions: u64,
+    compressions: u64,
+    swapins: u64,
+    swapouts: u64,
+    compressor_page_count: u32,
+    throttled_count: u32,
+    external_page_count: u32,
+    internal_page_count: u32,
+    total_uncompressed_pages_in_compressor: u64,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_vm_stats() -> Result<VmStatistics64, SensorError> {
+    const HOST_VM_INFO64: libc::c_int = 4;
+    #[allow(deprecated)]
+    let host = unsafe { libc::mach_host_self() };
+    let mut stats: VmStatistics64 = unsafe { std::mem::zeroed() };
+    let mut count = (std::mem::size_of::<VmStatistics64>() / std::mem::size_of::<i32>()) as u32;
+
+    let ret = unsafe {
+        libc::host_statistics64(
+            host,
+            HOST_VM_INFO64,
+            &mut stats as *mut _ as *mut i32,
+            &mut count,
+        )
+    };
+
+    if ret != 0 {
+        return Err(SensorError::ProbeFailed {
+            probe: PROBE_ID.to_string(),
+            reason: format!("host_statistics64 failed: {ret}"),
+        });
+    }
+
+    Ok(stats)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_swap_usage() -> (u64, u64) {
+    #[repr(C)]
+    struct XswUsage {
+        xsu_total: u64,
+        xsu_avail: u64,
+        xsu_used: u64,
+        xsu_pagesize: u32,
+        xsu_encrypted: i32,
+    }
+
+    let mut usage: XswUsage = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<XswUsage>();
+
+    let ret = unsafe {
+        libc::sysctlbyname(
+            c"vm.swapusage".as_ptr(),
+            &mut usage as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+
+    if ret != 0 {
+        return (0, 0);
+    }
+
+    (usage.xsu_total, usage.xsu_used)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn collect_memory_macos() -> Result<MemoryInfo, SensorError> {
+    Err(SensorError::ProbeFailed {
+        probe: PROBE_ID.to_string(),
+        reason: "macOS memory collection not available on this platform".to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Windows — GlobalMemoryStatusEx
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn collect_memory_windows() -> Result<MemoryInfo, SensorError> {
+    use windows_sys::Win32::System::SystemInformation::*;
+
+    let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+
+    if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 {
+        return Err(SensorError::ProbeFailed {
+            probe: PROBE_ID.to_string(),
+            reason: "GlobalMemoryStatusEx failed".to_string(),
+        });
+    }
+
+    let total = status.ullTotalPhys;
+    let available = status.ullAvailPhys;
+    let used = total.saturating_sub(available);
+    let swap_total = status.ullTotalPageFile;
+    let swap_used = swap_total.saturating_sub(status.ullAvailPageFile);
+
+    Ok(MemoryInfo {
+        total_bytes: total,
+        used_bytes: used,
+        available_bytes: available,
+        swap_total_bytes: swap_total,
+        swap_used_bytes: swap_used,
+        usage_percent: if total > 0 {
+            (used as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        },
+        swap_percent: if swap_total > 0 {
+            (swap_used as f64 / swap_total as f64) * 100.0
+        } else {
+            0.0
+        },
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn collect_memory_windows() -> Result<MemoryInfo, SensorError> {
+    Err(SensorError::ProbeFailed {
+        probe: PROBE_ID.to_string(),
+        reason: "Windows memory collection not available on this platform".to_string(),
     })
 }
 

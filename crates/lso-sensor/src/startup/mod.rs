@@ -1,10 +1,15 @@
 //! Startup item discovery probe (F19).
 //!
-//! Linux: systemd services + XDG autostart (fully implemented).
-//! macOS / Windows: stubbed, returns empty results.
+//! Linux: systemd services + XDG autostart.
+//! macOS: LaunchAgents + LaunchDaemons (plist files).
+//! Windows: Registry Run keys + shell:startup folder.
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -142,12 +147,26 @@ pub fn collect_startup_items(platform: Platform) -> Result<Vec<StartupItem>, Sen
             }
         }
         Platform::MacOS => {
-            tracing::info!("macOS startup probe: not yet implemented");
-            Ok(Vec::new())
+            #[cfg(target_os = "macos")]
+            {
+                macos::scan_startup_items()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                tracing::info!("macOS startup probe: cross-compiled stub, returning empty");
+                Ok(Vec::new())
+            }
         }
         Platform::Windows => {
-            tracing::info!("Windows startup probe: not yet implemented");
-            Ok(Vec::new())
+            #[cfg(target_os = "windows")]
+            {
+                windows::scan_startup_items()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                tracing::info!("Windows startup probe: cross-compiled stub, returning empty");
+                Ok(Vec::new())
+            }
         }
     }
 }

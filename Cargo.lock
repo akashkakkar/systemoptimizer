@@ -1874,12 +1874,13 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lso-actuator"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
  "dirs",
  "filetime",
+ "libc",
  "lso-core",
  "lso-db",
  "serde",
@@ -1889,11 +1890,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "lso-ai"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1913,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "lso-app"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -1934,7 +1936,7 @@ dependencies = [
 
 [[package]]
 name = "lso-core"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1950,7 +1952,7 @@ dependencies = [
 
 [[package]]
 name = "lso-db"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1968,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "lso-engine"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "lso-core",
@@ -1982,11 +1984,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lso-integration-tests"
+version = "0.5.0"
+dependencies = [
+ "lso-actuator",
+ "lso-core",
+ "lso-sensor",
+ "tokio",
+]
+
+[[package]]
 name = "lso-sensor"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "dirs",
  "futures",
  "libc",
  "lso-core",
@@ -1999,6 +2012,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
