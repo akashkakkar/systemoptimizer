@@ -34,6 +34,7 @@ export function AuditLogView() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [rollingBack, setRollingBack] = useState<string | null>(null);
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAuditLog();
@@ -67,10 +68,7 @@ export function AuditLogView() {
 
   const handleExport = useCallback(
     async (format: ExportFormat) => {
-      const ext = format === "json" ? "json" : "csv";
-      const now = new Date().toISOString().slice(0, 10);
-      const path = `lso-audit-${now}.${ext}`;
-      await exportLog(format, path);
+      setExportedPath(await exportLog(format));
     },
     [exportLog]
   );
@@ -101,6 +99,15 @@ export function AuditLogView() {
           </button>
         </div>
       </div>
+
+      {exportedPath && !error && (
+        <div
+          role="status"
+          className="mb-4 p-3 bg-green-900/40 border border-green-700 rounded-lg text-green-200 text-sm"
+        >
+          Exported to {exportedPath}
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">

@@ -18,7 +18,8 @@ interface AuditState {
   setFilter: (filter: Partial<AuditFilter>) => void;
   fetchAuditLog: () => Promise<void>;
   rollback: (auditId: string) => Promise<void>;
-  exportLog: (format: ExportFormat, path: string) => Promise<void>;
+  /** Export the filtered log; resolves to the saved file path, or null on failure. */
+  exportLog: (format: ExportFormat) => Promise<string | null>;
   preflightCleanup: (target: CleanupTarget) => Promise<PreflightReport>;
   executeCleanup: (target: CleanupTarget) => Promise<CleanupResult>;
 }
@@ -63,17 +64,18 @@ export const useAuditStore = create<AuditState>((set, get) => ({
     }
   },
 
-  exportLog: async (format: ExportFormat, path: string) => {
+  exportLog: async (format: ExportFormat) => {
+    set({ error: null });
     try {
-      await invoke("export_audit_log", {
+      return await invoke<string>("export_audit_log", {
         format,
-        path,
         filter: get().filter,
       });
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : String(err),
       });
+      return null;
     }
   },
 

@@ -269,16 +269,31 @@ pub async fn get_audit_log(
 
 /// Export audit log to a file in JSON or CSV format.
 #[tauri::command]
+///
+/// The destination is chosen here, not by the frontend: a timestamped file in
+/// the user's Downloads folder (home folder if unavailable). Returns the path
+/// written so the UI can show it.
 pub async fn export_audit_log(
     state: State<'_, AppState>,
     format: ExportFormat,
-    path: String,
     filter: AuditFilter,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    let dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or("cannot locate a Downloads or home folder")?;
+    let ext = match format {
+        ExportFormat::Json => "json",
+        ExportFormat::Csv => "csv",
+    };
+    let dest = dir.join(format!(
+        "lso-audit-{}.{ext}",
+        Utc::now().format("%Y%m%d-%H%M%S")
+    ));
     state
         .db
-        .export_audit_log(format, &filter, &PathBuf::from(path))
-        .map_err(|e| e.to_string())
+        .export_audit_log(format, &filter, &dest)
+        .map_err(|e| format!("could not write {}: {e}", dest.display()))?;
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 /// Rollback a previously executed action using its snapshot.
