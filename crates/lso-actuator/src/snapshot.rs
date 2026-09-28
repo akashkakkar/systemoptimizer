@@ -83,9 +83,8 @@ impl SnapshotManager {
                 manifest_path.display()
             ))
         })?;
-        let manifest: Vec<(String, String)> = serde_json::from_str(&manifest_json).map_err(|e| {
-            ActuatorError::RollbackFailed(format!("cannot parse manifest: {e}"))
-        })?;
+        let manifest: Vec<(String, String)> = serde_json::from_str(&manifest_json)
+            .map_err(|e| ActuatorError::RollbackFailed(format!("cannot parse manifest: {e}")))?;
 
         let mut restored = 0u64;
         for (original_path, relative) in &manifest {
