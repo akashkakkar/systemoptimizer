@@ -1,8 +1,8 @@
 //! Temp file cleanup executor — scans and removes stale temporary files.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -13,6 +13,7 @@ use lso_core::{
 };
 use tracing::{debug, warn};
 
+use crate::open_files::open_file_paths;
 use crate::snapshot::SnapshotManager;
 
 const MIN_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -44,13 +45,15 @@ impl TempCleanupExecutor {
         let mut deletable = Vec::new();
         let mut skipped = Vec::new();
         let now = SystemTime::now();
-        let open_files = get_open_files();
+        let open_files = open_file_paths();
 
         for dir in &self.dirs {
-            if !dir.exists() {
+            // Resolve the root once (e.g. macOS /var -> /private/var) so child
+            // paths match the kernel's real paths in the open-file set.
+            let Ok(root) = fs::canonicalize(dir) else {
                 continue;
-            }
-            self.scan_dir(dir, &mut deletable, &mut skipped, now, &open_files);
+            };
+            self.scan_dir(&root, &mut deletable, &mut skipped, now, &open_files);
         }
 
         (deletable, skipped)
@@ -62,7 +65,7 @@ impl TempCleanupExecutor {
         deletable: &mut Vec<FileEntry>,
         skipped: &mut Vec<SkippedFile>,
         now: SystemTime,
-        open_files: &[PathBuf],
+        open_files: &HashSet<PathBuf>,
     ) {
         let entries = match fs::read_dir(dir) {
             Ok(e) => e,
@@ -75,12 +78,27 @@ impl TempCleanupExecutor {
         for entry in entries.flatten() {
             let path = entry.path();
 
-            if path.is_dir() {
+            // DirEntry::file_type does not follow symlinks. Never traverse or
+            // delete through a link: it could point outside the cleanup root.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                skipped.push(SkippedFile {
+                    path: path.to_string_lossy().to_string(),
+                    reason: "symbolic link".into(),
+                });
+                continue;
+            }
+            if file_type.is_dir() {
                 self.scan_dir(&path, deletable, skipped, now, open_files);
                 continue;
             }
+            if !file_type.is_file() {
+                continue;
+            }
 
-            let meta = match fs::metadata(&path) {
+            let meta = match fs::symlink_metadata(&path) {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -104,7 +122,7 @@ impl TempCleanupExecutor {
                 continue;
             }
 
-            if is_file_open(&path, open_files) {
+            if open_files.contains(&path) {
                 skipped.push(SkippedFile {
                     path: path.to_string_lossy().to_string(),
                     reason: "file is in use by another process".into(),
@@ -247,37 +265,6 @@ fn resolve_dirs(target: CleanupTarget) -> Vec<PathBuf> {
     }
 }
 
-/// Get list of open files via lsof (macOS/Linux) or handle.exe (Windows).
-fn get_open_files() -> Vec<PathBuf> {
-    if cfg!(target_os = "windows") {
-        return Vec::new();
-    }
-
-    let output = Command::new("lsof")
-        .args(["-F", "n"])
-        .output();
-
-    match output {
-        Ok(out) => {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter_map(|line| line.strip_prefix('n'))
-                .filter(|p| p.starts_with('/'))
-                .map(PathBuf::from)
-                .collect()
-        }
-        Err(e) => {
-            warn!(error = %e, "lsof unavailable, skipping open-file check");
-            Vec::new()
-        }
-    }
-}
-
-/// Check if a file is currently open by another process.
-fn is_file_open(path: &Path, open_files: &[PathBuf]) -> bool {
-    open_files.iter().any(|p| p == path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,11 +305,8 @@ mod tests {
         let old_file = source.join("old.tmp");
         fs::write(&old_file, "old content").unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(48 * 3600);
-        filetime::set_file_mtime(
-            &old_file,
-            filetime::FileTime::from_system_time(old_time),
-        )
-        .unwrap_or_default();
+        filetime::set_file_mtime(&old_file, filetime::FileTime::from_system_time(old_time))
+            .unwrap_or_default();
 
         let new_file = source.join("new.tmp");
         fs::write(&new_file, "new content").unwrap();
@@ -336,10 +320,7 @@ mod tests {
         assert_eq!(report.file_count, 1);
         assert_eq!(report.skipped.len(), 1);
 
-        let result = executor
-            .execute(Box::new(|_| {}))
-            .await
-            .unwrap();
+        let result = executor.execute(Box::new(|_| {})).await.unwrap();
         assert_eq!(result.files_deleted, 1);
         assert!(!old_file.exists());
         assert!(new_file.exists());
@@ -354,11 +335,8 @@ mod tests {
         let file = source.join("deleteme.tmp");
         fs::write(&file, "precious data").unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(48 * 3600);
-        filetime::set_file_mtime(
-            &file,
-            filetime::FileTime::from_system_time(old_time),
-        )
-        .unwrap_or_default();
+        filetime::set_file_mtime(&file, filetime::FileTime::from_system_time(old_time))
+            .unwrap_or_default();
 
         let snap_dir = dir.path().join("snaps");
         let snap_mgr = SnapshotManager::new(snap_dir.clone()).unwrap();
@@ -373,5 +351,63 @@ mod tests {
         let restored = restore_mgr.restore(&result.snapshot_id).unwrap();
         assert_eq!(restored, 1);
         assert_eq!(fs::read_to_string(&file).unwrap(), "precious data");
+    }
+
+    fn make_old(path: &Path) {
+        let old_time = SystemTime::now() - Duration::from_secs(48 * 3600);
+        filetime::set_file_mtime(path, filetime::FileTime::from_system_time(old_time)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinks_are_never_followed_or_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let precious = outside.join("precious.txt");
+        fs::write(&precious, "keep me").unwrap();
+        make_old(&precious);
+
+        let root = dir.path().join("cache");
+        fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("dir_link")).unwrap();
+        std::os::unix::fs::symlink(&precious, root.join("file_link")).unwrap();
+
+        let snap_mgr = SnapshotManager::new(dir.path().join("snaps")).unwrap();
+        let mut executor = TempCleanupExecutor::new(CleanupTarget::UserCache, snap_mgr).unwrap();
+        executor.dirs = vec![root.clone()];
+
+        let report = executor.preflight().await.unwrap();
+        assert_eq!(report.file_count, 0);
+        assert_eq!(report.skipped.len(), 2);
+
+        let result = executor.execute(Box::new(|_| {})).await.unwrap();
+        assert_eq!(result.files_deleted, 0);
+        assert!(precious.exists());
+        assert!(root.join("dir_link").symlink_metadata().is_ok());
+        assert!(root.join("file_link").symlink_metadata().is_ok());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn open_files_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("cache");
+        fs::create_dir_all(&root).unwrap();
+        let held = root.join("held.tmp");
+        fs::write(&held, "busy").unwrap();
+        make_old(&held);
+        let _handle = fs::File::open(&held).unwrap();
+
+        let snap_mgr = SnapshotManager::new(dir.path().join("snaps")).unwrap();
+        let mut executor = TempCleanupExecutor::new(CleanupTarget::UserCache, snap_mgr).unwrap();
+        executor.dirs = vec![root];
+
+        let report = executor.preflight().await.unwrap();
+        assert_eq!(report.file_count, 0);
+        assert_eq!(
+            report.skipped[0].reason,
+            "file is in use by another process"
+        );
     }
 }

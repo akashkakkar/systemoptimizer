@@ -357,7 +357,10 @@ fn enable_desktop_autostart(file_stem: &str) -> Result<DisableResult, ActuatorEr
 #[cfg(target_os = "macos")]
 fn verify_launchctl_label_exists(label: &str) -> Result<(), ActuatorError> {
     let output = std::process::Command::new("launchctl")
-        .args(["print", &format!("gui/{}/{label}", unsafe { libc::getuid() })])
+        .args([
+            "print",
+            &format!("gui/{}/{label}", unsafe { libc::getuid() }),
+        ])
         .output()
         .map_err(|e| ActuatorError::ExecutionFailed {
             action: "preflight".into(),
@@ -441,15 +444,16 @@ fn enable_launchctl(label: &str) -> Result<DisableResult, ActuatorError> {
 
 #[cfg(target_os = "windows")]
 fn verify_registry_run_exists(name: &str) -> Result<(), ActuatorError> {
-    use windows_sys::Win32::System::Registry::*;
     use windows_sys::Win32::Foundation::*;
+    use windows_sys::Win32::System::Registry::*;
 
     let subkey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
     let subkey_w: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
     let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
     let mut hkey: HKEY = 0;
 
-    let ret = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) };
+    let ret =
+        unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) };
     if ret != ERROR_SUCCESS {
         return Err(ActuatorError::ExecutionFailed {
             action: "preflight".into(),
@@ -457,7 +461,16 @@ fn verify_registry_run_exists(name: &str) -> Result<(), ActuatorError> {
         });
     }
 
-    let ret = unsafe { RegQueryValueExW(hkey, name_w.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    let ret = unsafe {
+        RegQueryValueExW(
+            hkey,
+            name_w.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
     unsafe { RegCloseKey(hkey) };
 
     if ret != ERROR_SUCCESS {
@@ -471,15 +484,23 @@ fn verify_registry_run_exists(name: &str) -> Result<(), ActuatorError> {
 
 #[cfg(target_os = "windows")]
 fn disable_registry_run(name: &str) -> Result<DisableResult, ActuatorError> {
-    use windows_sys::Win32::System::Registry::*;
     use windows_sys::Win32::Foundation::*;
+    use windows_sys::Win32::System::Registry::*;
 
     let subkey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
     let subkey_w: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
     let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
     let mut hkey: HKEY = 0;
 
-    let ret = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey_w.as_ptr(), 0, KEY_ALL_ACCESS, &mut hkey) };
+    let ret = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            subkey_w.as_ptr(),
+            0,
+            KEY_ALL_ACCESS,
+            &mut hkey,
+        )
+    };
     if ret != ERROR_SUCCESS {
         return Ok(DisableResult::Failed {
             error: "cannot open registry key for writing".into(),

@@ -1,6 +1,7 @@
 //! LSO Actuator — gated executor with snapshot-before-mutate safety.
 
 pub mod cleanup;
+mod open_files;
 pub mod snapshot;
 pub mod startup_disable;
 
