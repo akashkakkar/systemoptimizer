@@ -42,7 +42,7 @@ Build distributable packages for macOS, Linux, and Windows. No auto-updater, no 
     "active": true,
     "targets": ["dmg", "appimage", "deb", "msi"],
     "icon": ["icons/icon.png"],
-    "identifier": "com.lso.app"
+    "identifier": "com.lso.desktop"
   }
 }
 ```

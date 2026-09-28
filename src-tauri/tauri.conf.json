@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicorighi/tauri-v2-docs/main/tauri.conf.schema.json",
   "productName": "LSO",
   "version": "0.5.0",
-  "identifier": "com.lso.app",
+  "identifier": "com.lso.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
