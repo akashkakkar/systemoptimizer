@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use lso_core::ActuatorError;
-use tracing::info;
+use tracing::{info, warn};
+
+/// Subdirectory of a snapshot holding the copied file blobs.
+const BLOB_DIR: &str = "files";
 
 /// Manages file snapshots for rollback support.
 pub struct SnapshotManager {
@@ -25,11 +28,32 @@ impl SnapshotManager {
     }
 
     /// Create a snapshot of the given files, returning the snapshot ID.
+    ///
+    /// Each file is copied to a short numbered blob (`files/<n>`); the manifest
+    /// maps original paths to blobs. This keeps every stored name well under
+    /// the 255-byte filename limit regardless of how deep the source path is.
+    /// On failure the partial snapshot is removed.
     pub fn create(&self, files: &[PathBuf]) -> Result<String, ActuatorError> {
         let snapshot_id = format!("snap-{}", Utc::now().format("%Y%m%d-%H%M%S-%3f"));
         let snapshot_dir = self.base_dir.join(&snapshot_id);
-        fs::create_dir_all(&snapshot_dir).map_err(|e| {
-            ActuatorError::SnapshotFailed(format!("cannot create {}: {e}", snapshot_dir.display()))
+        match Self::write_snapshot(&snapshot_dir, files) {
+            Ok(count) => {
+                info!(snapshot_id = %snapshot_id, file_count = count, "snapshot created");
+                Ok(snapshot_id)
+            }
+            Err(e) => {
+                if let Err(cleanup) = fs::remove_dir_all(&snapshot_dir) {
+                    warn!(dir = %snapshot_dir.display(), error = %cleanup, "cannot remove partial snapshot");
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn write_snapshot(snapshot_dir: &Path, files: &[PathBuf]) -> Result<usize, ActuatorError> {
+        let blob_dir = snapshot_dir.join(BLOB_DIR);
+        fs::create_dir_all(&blob_dir).map_err(|e| {
+            ActuatorError::SnapshotFailed(format!("cannot create {}: {e}", blob_dir.display()))
         })?;
 
         let mut manifest = Vec::new();
@@ -37,22 +61,10 @@ impl SnapshotManager {
             if !src.exists() {
                 continue;
             }
-            let relative = self.relative_key(src);
-            let dest = snapshot_dir.join(&relative);
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    ActuatorError::SnapshotFailed(format!(
-                        "cannot create parent dir for {}: {e}",
-                        dest.display()
-                    ))
-                })?;
-            }
-            fs::copy(src, &dest).map_err(|e| {
-                ActuatorError::SnapshotFailed(format!(
-                    "cannot copy {} → {}: {e}",
-                    src.display(),
-                    dest.display()
-                ))
+            let relative = format!("{BLOB_DIR}/{}", manifest.len());
+            // std::fs::copy uses clonefile on APFS: instant, no extra space.
+            fs::copy(src, snapshot_dir.join(&relative)).map_err(|e| {
+                ActuatorError::SnapshotFailed(format!("cannot copy {}: {e}", src.display()))
             })?;
             manifest.push((src.to_string_lossy().to_string(), relative));
         }
@@ -67,9 +79,7 @@ impl SnapshotManager {
                 manifest_path.display()
             ))
         })?;
-
-        info!(snapshot_id = %snapshot_id, file_count = manifest.len(), "snapshot created");
-        Ok(snapshot_id)
+        Ok(manifest.len())
     }
 
     /// Restore all files from a snapshot to their original locations.
@@ -110,16 +120,6 @@ impl SnapshotManager {
 
         info!(snapshot_id = %snapshot_id, restored_count = restored, "snapshot restored");
         Ok(restored)
-    }
-
-    /// Convert an absolute path to a safe relative key for storage.
-    fn relative_key(&self, path: &Path) -> String {
-        let s = path.to_string_lossy();
-        let stripped = s
-            .strip_prefix('/')
-            .or_else(|| s.strip_prefix("\\\\"))
-            .unwrap_or(&s);
-        stripped.replace(['/', '\\'], "_SEP_")
     }
 }
 
@@ -172,5 +172,47 @@ mod tests {
         let mgr = SnapshotManager::new(dir.path().join("snaps")).unwrap();
         let result = mgr.restore("snap-nonexistent");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn snapshot_handles_paths_longer_than_name_max() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = SnapshotManager::new(dir.path().join("snaps")).unwrap();
+
+        // Several ~200-byte components: each is legal, but the flattened path
+        // is far beyond the 255-byte filename limit.
+        let mut deep = dir.path().join("src");
+        for i in 0..3 {
+            deep = deep.join(format!("{i}-{}", "x".repeat(200)));
+        }
+        fs::create_dir_all(&deep).unwrap();
+        let file = deep.join("2026-07-06T13-48-50-142Z.jsonl");
+        fs::write(&file, "log line").unwrap();
+
+        let snap_id = mgr.create(std::slice::from_ref(&file)).unwrap();
+        fs::remove_file(&file).unwrap();
+        assert_eq!(mgr.restore(&snap_id).unwrap(), 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "log line");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_snapshot_leaves_no_partial_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("snaps");
+        let mgr = SnapshotManager::new(base.clone()).unwrap();
+
+        let ok = dir.path().join("ok.txt");
+        fs::write(&ok, "fine").unwrap();
+        let unreadable = dir.path().join("secret.txt");
+        fs::write(&unreadable, "nope").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = mgr.create(&[ok, unreadable.clone()]);
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(&base).unwrap().count(), 0);
     }
 }
