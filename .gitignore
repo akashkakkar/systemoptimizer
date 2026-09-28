@@ -9,3 +9,12 @@ Thumbs.db
 tsconfig.node.tsbuildinfo
 .claude/launch.json
 src-tauri/gen/
+
+# Build artifacts
+tsconfig.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Local Claude Code state
+.claude/settings.local.json
+.claude/worktrees/
