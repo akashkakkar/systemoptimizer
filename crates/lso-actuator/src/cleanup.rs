@@ -242,10 +242,14 @@ fn resolve_dirs(target: CleanupTarget) -> Vec<PathBuf> {
         CleanupTarget::UserCache => {
             let mut dirs = Vec::new();
             if let Some(home) = dirs::home_dir() {
+                // On macOS only ~/Library/Caches is the OS-designated cache.
+                // ~/.cache there is used by CLI tools for costly data such as
+                // LLM models (lm-studio) and Python environments (uv).
                 if cfg!(target_os = "macos") {
                     dirs.push(home.join("Library/Caches"));
+                } else {
+                    dirs.push(home.join(".cache"));
                 }
-                dirs.push(home.join(".cache"));
             }
             dirs
         }
@@ -409,5 +413,13 @@ mod tests {
             report.skipped[0].reason,
             "file is in use by another process"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_user_cache_excludes_dot_cache() {
+        let dirs = resolve_dirs(CleanupTarget::UserCache);
+        assert!(dirs.iter().all(|d| !d.ends_with(".cache")));
+        assert!(dirs.iter().any(|d| d.ends_with("Library/Caches")));
     }
 }
