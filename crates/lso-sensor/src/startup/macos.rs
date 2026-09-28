@@ -129,7 +129,6 @@ mod tests {
 </dict>
 </plist>"#;
 
-        let item = parse_plist_file(std::path::Path::new("test.plist"), StartupType::LaunchAgent);
         // Can't test without a real file; test the parser helpers instead
         let label = extract_plist_string(plist, "Label").unwrap();
         assert_eq!(label, "com.example.agent");

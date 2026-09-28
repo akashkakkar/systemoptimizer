@@ -58,10 +58,10 @@ fi
 
 # ── Build ──────────────────────────────────────────────────────────────
 info "Building release..."
-cargo tauri build --release 2>&1
+npx tauri build 2>&1
 
 # ── Post-build ─────────────────────────────────────────────────────────
-BUNDLE_DIR="$PROJECT_ROOT/src-tauri/target/release/bundle"
+BUNDLE_DIR="$PROJECT_ROOT/target/release/bundle"
 
 if [ -d "$BUNDLE_DIR" ]; then
     info "Build artifacts:"
